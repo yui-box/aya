@@ -1,0 +1,64 @@
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: aya-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: aya-qdrant
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    restart: unless-stopped
+
+  indexer:
+    build: ./services/indexer
+    container_name: aya-indexer
+    depends_on:
+      - ollama
+      - qdrant
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      QDRANT_HOST: http://qdrant:6333
+      EMBED_MODEL: ${EMBED_MODEL:-nomic-embed-text}
+      QDRANT_COLLECTION: ${QDRANT_COLLECTION:-vault}
+      VAULT_DIR: /vault
+    volumes:
+      - ${VAULT_PATH}:/vault:ro
+    restart: unless-stopped
+
+  bot:
+    build: ./services/bot
+    container_name: aya-bot
+    depends_on:
+      - ollama
+      - qdrant
+      - indexer
+    environment:
+      DISCORD_TOKEN: ${DISCORD_TOKEN}
+      OLLAMA_HOST: http://ollama:11434
+      QDRANT_HOST: http://qdrant:6333
+      LLM_MODEL: ${LLM_MODEL:-qwen2.5:7b-instruct}
+      EMBED_MODEL: ${EMBED_MODEL:-nomic-embed-text}
+      QDRANT_COLLECTION: ${QDRANT_COLLECTION:-vault}
+      TOP_K: ${TOP_K:-5}
+    volumes:
+      - ${VAULT_PATH}:/vault:ro
+    restart: unless-stopped
+
+volumes:
+  ollama_data:
+  qdrant_data:
