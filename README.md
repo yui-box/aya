@@ -105,11 +105,96 @@
 
 ---
 
-## Next Steps
+## Local Testing
 
-1. Confirm hardware specs (GPU/RAM)
-2. Create Discord bot account, obtain token
-3. Scaffold `docker-compose.yml` and service Dockerfiles
-4. Implement indexer (file watcher + chunking + embedding)
-5. Implement bot (Discord event handler + RAG query pipeline)
-6. Test with sample vault before pointing at real Obsidian data
+### Prerequisites
+
+- Docker Desktop (or Docker Engine + Compose v2)
+- ~10 GB free disk for models
+- A Discord bot token ([Developer Portal](https://discord.com/developers/applications) → New Application → Bot → Reset Token)
+  - Enable **Privileged Gateway Intents**: `MESSAGE CONTENT INTENT`
+  - Invite to your test server via OAuth2 URL Generator with scopes `bot`, permissions `Send Messages` + `Read Message History`
+- A folder with some markdown files to act as your vault (a small test vault is fine)
+
+### 1. Configure environment
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env`:
+```
+DISCORD_TOKEN=your_bot_token_here
+VAULT_PATH=/absolute/path/to/your/test-vault
+```
+
+### 2. Start the stack
+
+```bash
+docker compose up -d --build
+docker compose logs -f
+```
+
+First run takes a few minutes (image builds + downloads).
+
+### 3. Pull models into Ollama (one-time)
+
+```bash
+docker compose exec ollama ollama pull qwen2.5:7b-instruct
+docker compose exec ollama ollama pull nomic-embed-text
+```
+
+### 4. Verify services
+
+```bash
+# Ollama responding
+curl http://localhost:11434/api/tags
+
+# Qdrant responding
+curl http://localhost:6333/collections
+
+# Indexer chunked + uploaded the vault
+docker compose logs indexer | tail -20
+
+# Bot connected to Discord gateway
+docker compose logs bot | tail -20
+# expect: "Logged in as <bot-name>"
+```
+
+### 5. Test from Discord
+
+In the channel where the bot is invited, mention it with a question:
+
+```
+@your-bot what does my note about X say?
+```
+
+The bot should reply with an answer grounded in your vault notes.
+
+### 6. Test indexer reactivity
+
+Add or edit a markdown file in your vault folder. The indexer should pick it up within a few seconds:
+
+```bash
+docker compose logs -f indexer
+```
+
+Then ask the bot about the new content.
+
+### Troubleshooting
+
+```bash
+# Force a full reindex
+docker compose restart indexer
+
+# Wipe the vector store and reindex from scratch
+docker compose down
+docker volume rm aya_qdrant_data
+docker compose up -d
+
+# Rebuild after editing service code
+docker compose up -d --build bot
+docker compose up -d --build indexer
+```
+
+If the bot doesn't respond to mentions, confirm the **MESSAGE CONTENT INTENT** is enabled in the Developer Portal — without it, `discord.py` receives empty message content.
