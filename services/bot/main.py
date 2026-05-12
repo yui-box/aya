@@ -29,6 +29,7 @@ ALLOWED_CHANNELS = set(
 ALLOWED_GUILDS = set(
     int(x.strip()) for x in os.environ.get("ALLOWED_GUILDS", "").split(",") if x.strip()
 )
+REQUIRED_ROLE = os.environ.get("REQUIRED_ROLE", "").strip()
 COOLDOWN_ANTHROPIC = int(os.environ.get("COOLDOWN_SECONDS", "30"))
 COOLDOWN_LOCAL = int(os.environ.get("COOLDOWN_LOCAL_SECONDS", "10"))
 MAX_QUESTION_LENGTH = int(os.environ.get("MAX_QUESTION_LENGTH", "500"))
@@ -145,11 +146,19 @@ def format_sources(nodes: list) -> str:
     return "**Sources:** " + " · ".join(f"`{s}`" for s in seen)
 
 
+def has_required_role(member: discord.Member) -> bool:
+    """Return True if REQUIRED_ROLE is unset or the member has that role."""
+    if not REQUIRED_ROLE:
+        return True
+    return any(role.name == REQUIRED_ROLE for role in member.roles)
+
+
 # --- Discord setup ---
 
 intents = discord.Intents.default()
 intents.message_content = True
 intents.guild_messages = True
+intents.members = True  # needed to read member roles
 
 client = discord.Client(intents=intents)
 tree = app_commands.CommandTree(client)
@@ -158,8 +167,7 @@ retriever = None
 # Index build time for /status
 _start_time = time.time()
 
-# Per-guild thread mode toggle — keys are guild IDs, values are bool
-# Seeded from USE_THREADS env var for any guild not explicitly toggled
+# Per-guild thread mode toggle
 guild_thread_mode: dict[int, bool] = {}
 
 anthropic_cooldowns: dict[int, float] = {}
@@ -290,12 +298,14 @@ async def status(interaction: discord.Interaction):
         uptime_str = f"{hours}h {minutes}m {seconds}s"
 
         thread_mode_str = "on" if get_thread_mode(interaction.guild_id) else "off"
+        role_str = f"`{REQUIRED_ROLE}`" if REQUIRED_ROLE else "all members"
 
         msg = (
             f"**GTT Bot — Status**\n\n"
             f"`Knowledge base` {vector_count} chunks indexed\n"
             f"`Embed model` {EMBED_MODEL}\n"
             f"`LLM` claude-sonnet-4-5 (Anthropic API)\n"
+            f"`API access` {role_str}\n"
             f"`Thread mode` {thread_mode_str}\n"
             f"`Uptime` {uptime_str}\n"
             f"`Cooldown` {COOLDOWN_ANTHROPIC}s (mention) · {COOLDOWN_LOCAL}s (search)\n"
@@ -315,6 +325,8 @@ async def on_ready():
     await tree.sync()
     log.info("Slash commands synced")
     log.info("Logged in as %s", client.user)
+    if REQUIRED_ROLE:
+        log.info("API access restricted to role: %s", REQUIRED_ROLE)
 
 
 @client.event
@@ -326,6 +338,14 @@ async def on_message(message: discord.Message):
     if message.guild and not is_allowed_guild(message.guild.id):
         return
     if not is_allowed_channel(message.channel.id):
+        return
+
+    # Role check — only applies to guild messages
+    if message.guild and not has_required_role(message.author):
+        await message.reply(
+            f"You need the **{REQUIRED_ROLE}** role to use this.",
+            delete_after=10,
+        )
         return
 
     question = message.clean_content.replace(f"@{client.user.name}", "").strip()
