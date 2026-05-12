@@ -1,25 +1,25 @@
 services:
   ollama:
     image: ollama/ollama:latest
-    container_name: aya-ollama
+    container_name: gtt-ollama
     ports:
-      - "11434:11434"
+      - "127.0.0.1:11434:11434"
     volumes:
       - ollama_data:/root/.ollama
     restart: unless-stopped
 
   qdrant:
     image: qdrant/qdrant:latest
-    container_name: aya-qdrant
+    container_name: gtt-qdrant
     ports:
-      - "6333:6333"
+      - "127.0.0.1:6333:6333"
     volumes:
       - qdrant_data:/qdrant/storage
     restart: unless-stopped
 
   indexer:
     build: ./services/indexer
-    container_name: aya-indexer
+    container_name: gtt-indexer
     depends_on:
       - ollama
       - qdrant
@@ -35,7 +35,7 @@ services:
 
   bot:
     build: ./services/bot
-    container_name: aya-bot
+    container_name: gtt-bot
     depends_on:
       - ollama
       - qdrant
@@ -50,8 +50,10 @@ services:
       TOP_K: ${TOP_K:-5}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       ALLOWED_CHANNELS: ${ALLOWED_CHANNELS:-}
+      ALLOWED_GUILDS: ${ALLOWED_GUILDS:-}
       COOLDOWN_SECONDS: ${COOLDOWN_SECONDS:-30}
       COOLDOWN_LOCAL_SECONDS: ${COOLDOWN_LOCAL_SECONDS:-10}
+      MAX_QUESTION_LENGTH: ${MAX_QUESTION_LENGTH:-500}
     volumes:
       - ${VAULT_PATH}:/vault:ro
     restart: unless-stopped
