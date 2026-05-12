@@ -139,9 +139,15 @@ def query_anthropic(question: str, context: str) -> str:
 def extractive_summary(nodes: list) -> str:
     lines = []
     for i, node in enumerate(nodes, 1):
-        content = node.get_content().strip()
-        first_sentence = content.split(".")[0].strip() + "."
+        chunk_content = node.get_content().strip()
         source = node.metadata.get("file_name", f"chunk {i}")
+        # Strip title line if it matches the filename stem
+        stem = source.replace(".md", "")
+        content_lines = chunk_content.splitlines()
+        if content_lines and content_lines[0].strip() == stem:
+            content_lines = content_lines[1:]
+        chunk_content = "\n".join(content_lines).strip()
+        first_sentence = chunk_content.split(".")[0].strip() + "."
         lines.append(f"**[{i}] {source}**\n{first_sentence}")
     return "\n\n".join(lines)
 
@@ -363,7 +369,7 @@ async def check_automod(message: discord.Message):
 # --- Slash command: /knowledge-base ---
 
 @tree.command(name="knowledge-base", description="Search the GTT vault directly (local, no API cost)")
-@app_commands.describe(query="What do you want to look up in the knowledge base?")
+@app_commands.describe(query="Use specific terms e.g. 'deterministic intent folding' not 'what is DIF'")
 async def knowledge_base(interaction: discord.Interaction, query: str):
     if not is_allowed_guild(interaction.guild_id):
         await interaction.response.send_message("This bot isn't enabled in this server.", ephemeral=True)
@@ -423,7 +429,7 @@ async def knowledge_base(interaction: discord.Interaction, query: str):
 # --- Slash command: /knowledge-search ---
 
 @tree.command(name="knowledge-search", description="Search the GTT vault in a private thread (visible to mods)")
-@app_commands.describe(query="What do you want to look up in the knowledge base?")
+@app_commands.describe(query="Use specific terms e.g. 'deterministic intent folding' not 'what is DIF'")
 async def knowledge_search(interaction: discord.Interaction, query: str):
     if not is_allowed_guild(interaction.guild_id):
         await interaction.response.send_message("This bot isn't enabled in this server.", ephemeral=True)
