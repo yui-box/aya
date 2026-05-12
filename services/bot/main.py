@@ -238,7 +238,7 @@ async def knowledge_base(interaction: discord.Interaction, query: str):
         nodes = await asyncio.to_thread(retrieve_context, query)
 
         if not nodes:
-            await interaction.followup.send("Nothing found in the knowledge base for that query.")
+            await interaction.followup.send("Nothing found in the knowledge base for that query.", ephemeral=True)
             return
 
         summary = extractive_summary(nodes)
@@ -247,13 +247,35 @@ async def knowledge_base(interaction: discord.Interaction, query: str):
         summary_msg = f"**Knowledge Base — Summary**\n\n{summary}"
         raw_msg = f"**Knowledge Base — Raw Chunks**\n\n{raw}"
 
-        await interaction.followup.send(summary_msg[:DISCORD_MSG_LIMIT])
-        for i in range(0, len(raw_msg), DISCORD_MSG_LIMIT):
-            await interaction.followup.send(raw_msg[i : i + DISCORD_MSG_LIMIT])
+        # Try DM first — cleaner and fully private
+        try:
+            dm = await interaction.user.create_dm()
+            await dm.send(summary_msg[:DISCORD_MSG_LIMIT])
+            for i in range(0, len(raw_msg), DISCORD_MSG_LIMIT):
+                await dm.send(raw_msg[i : i + DISCORD_MSG_LIMIT])
+            await interaction.followup.send(
+                "Results sent to your DMs.", ephemeral=True
+            )
+            log.info("knowledge-base results DM'd to %s", interaction.user)
+
+        except discord.Forbidden:
+            # User has DMs disabled — fall back to ephemeral in channel
+            log.info("DM failed for %s, falling back to ephemeral", interaction.user)
+            await interaction.followup.send(
+                summary_msg[:DISCORD_MSG_LIMIT], ephemeral=True
+            )
+            for i in range(0, len(raw_msg), DISCORD_MSG_LIMIT):
+                await interaction.followup.send(
+                    raw_msg[i : i + DISCORD_MSG_LIMIT], ephemeral=True
+                )
+            await interaction.followup.send(
+                "Enable DMs from server members to receive results privately next time.",
+                ephemeral=True,
+            )
 
     except Exception:
         log.exception("knowledge-base command failed")
-        await interaction.followup.send("Something went wrong with the lookup.")
+        await interaction.followup.send("Something went wrong with the lookup.", ephemeral=True)
 
 
 # --- Slash command: /thread-mode ---
