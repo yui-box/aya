@@ -55,10 +55,17 @@ A local, containerized Discord bot for the [Goju Tech Talk (GTT)](https://youtub
 
 | Command | Description | Cost |
 |---|---|---|
-| `@GTT Bot <question>` | Ask a question, get a GTT-voiced answer | Anthropic API |
-| `/knowledge-base <query>` | Search the vault directly, returns raw chunks | Free (local) |
+| `@GTT Bot <question>` | Ask a question, get a GTT-voiced answer in a thread | Anthropic API |
+| `/knowledge-search <query>` | Search vault in a private thread (visible to mods) | Free (local) |
+| `/knowledge-base <query>` | Search vault, results sent to your DMs only | Free (local) |
 | `/thread-mode on/off` | Toggle thread replies on or off | Free (local) |
-| `/status` | Show knowledge base size, uptime, config | Free (local) |
+| `/status` | Show knowledge base size, uptime, config (private) | Free (local) |
+
+### Thread memory
+
+When you `@GTT Bot` inside an existing thread, the bot reads the last 10 messages and builds conversation history. Follow-up questions are answered in context — no need to repeat yourself. This applies to both `@GTT Bot` threads and `/knowledge-search` threads.
+
+The 10-message cap keeps token costs controlled. Long threads are still readable but only the most recent 10 messages are passed to Claude.
 
 ---
 
@@ -176,10 +183,16 @@ All settings go in `.env`. See `.env.example` for the full list with description
 | `TOP_K` | `5` | Number of vault chunks retrieved per query |
 | `ALLOWED_GUILDS` | *(all)* | Comma-separated guild IDs. Empty = allow all |
 | `ALLOWED_CHANNELS` | *(all)* | Comma-separated channel IDs. Empty = allow all |
-| `COOLDOWN_SECONDS` | `30` | Per-user cooldown for `@mention` (Anthropic API) |
-| `COOLDOWN_LOCAL_SECONDS` | `10` | Per-user cooldown for `/knowledge-base` |
-| `MAX_QUESTION_LENGTH` | `500` | Max characters per question |
+| `COOLDOWN_SECONDS` | `120` | Per-user cooldown for `@mention` (Anthropic API) |
+| `COOLDOWN_LOCAL_SECONDS` | `30` | Per-user cooldown for `/knowledge-base` and `/knowledge-search` |
+| `MAX_QUESTION_LENGTH` | `300` | Max characters per question |
 | `USE_THREADS` | `false` | Reply in threads instead of inline |
+| `REQUIRED_ROLE` | *(none)* | Role name required to use `@GTT Bot`. Empty = allow all |
+| `MOD_CHANNEL_ID` | *(none)* | Channel ID for automod alerts |
+| `GENERAL_CHANNEL_ID` | *(none)* | Channel ID for self-promo detection |
+| `SELF_PROMO_PATTERNS` | *(none)* | Comma-separated self-promo keywords (kept private in `.env`) |
+| `NEW_ACCOUNT_DAYS` | `7` | Flag new accounts younger than this with no role |
+| `SUSPICIOUS_MSG_LENGTH` | `200` | Message length threshold for new account flag |
 
 ### Thread mode
 

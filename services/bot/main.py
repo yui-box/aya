@@ -117,7 +117,7 @@ def retrieve_context(question: str) -> list:
     return retriever.retrieve(question)
 
 
-def query_anthropic(question: str, context: str) -> str:
+def query_anthropic(question: str, context: str, history: list = None) -> str:
     ac = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     prompt = (
         "Context from the GTT knowledge base:\n"
@@ -127,11 +127,19 @@ def query_anthropic(question: str, context: str) -> str:
         f"Question: {question}\n"
         "Answer: "
     )
+    # Build messages array with optional conversation history
+    messages = []
+    if history:
+        # Add all history except the last user message (we use the prompt instead)
+        for msg in history[:-1]:
+            messages.append(msg)
+    messages.append({"role": "user", "content": prompt})
+
     message = ac.messages.create(
         model="claude-sonnet-4-5",
         max_tokens=1024,
         system=SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": prompt}],
+        messages=messages,
     )
     return message.content[0].text.strip()
 
@@ -284,8 +292,17 @@ def check_cooldown(user_id: int, store: dict, seconds: int) -> float:
     return max(0.0, remaining)
 
 
-def is_allowed_channel(channel_id: int) -> bool:
-    return not ALLOWED_CHANNELS or channel_id in ALLOWED_CHANNELS
+def is_allowed_channel(channel) -> bool:
+    """Check if channel or its parent (for threads) is in ALLOWED_CHANNELS."""
+    if not ALLOWED_CHANNELS:
+        return True
+    # Direct channel match
+    if channel.id in ALLOWED_CHANNELS:
+        return True
+    # Thread — check parent channel
+    if isinstance(channel, discord.Thread) and channel.parent_id in ALLOWED_CHANNELS:
+        return True
+    return False
 
 
 def is_allowed_guild(guild_id: int) -> bool:
@@ -374,7 +391,7 @@ async def knowledge_base(interaction: discord.Interaction, query: str):
     if not is_allowed_guild(interaction.guild_id):
         await interaction.response.send_message("This bot isn't enabled in this server.", ephemeral=True)
         return
-    if not is_allowed_channel(interaction.channel_id):
+    if not is_allowed_channel(interaction.channel):
         await interaction.response.send_message("This command isn't enabled in this channel.", ephemeral=True)
         return
     if len(query) > MAX_QUESTION_LENGTH:
@@ -435,7 +452,7 @@ async def knowledge_search(interaction: discord.Interaction, query: str):
         await interaction.response.send_message("This bot isn't enabled in this server.", ephemeral=True)
         return
 
-    if not is_allowed_channel(interaction.channel_id):
+    if not is_allowed_channel(interaction.channel):
         await interaction.response.send_message("This command isn't enabled in this channel.", ephemeral=True)
         return
 
@@ -558,6 +575,34 @@ async def status(interaction: discord.Interaction):
         await interaction.followup.send("Something went wrong fetching status.", ephemeral=True)
 
 
+# --- Thread history helper ---
+
+async def get_thread_history(channel, limit: int = 10) -> list:
+    """Fetch last N messages from a thread and build conversation history."""
+    if not isinstance(channel, discord.Thread):
+        return []
+
+    history = []
+    try:
+        messages = [msg async for msg in channel.history(limit=limit + 1)]
+        messages.reverse()  # oldest first
+
+        for msg in messages:
+            if msg.author == client.user:
+                history.append({"role": "assistant", "content": msg.content})
+            elif not msg.author.bot:
+                # Strip bot mention from user messages
+                text = msg.clean_content
+                if client.user:
+                    text = text.replace(f"@{client.user.name}", "").strip()
+                if text:
+                    history.append({"role": "user", "content": text})
+    except Exception:
+        log.exception("Failed to fetch thread history")
+
+    return history
+
+
 # --- @mention: full Anthropic pipeline ---
 
 @client.event
@@ -586,7 +631,7 @@ async def on_message(message: discord.Message):
         return
     if message.guild and not is_allowed_guild(message.guild.id):
         return
-    if not is_allowed_channel(message.channel.id):
+    if not is_allowed_channel(message.channel):
         return
     if message.guild and not has_required_role(message.author):
         await message.reply(
@@ -613,7 +658,9 @@ async def on_message(message: discord.Message):
             try:
                 nodes = await asyncio.to_thread(retrieve_context, question)
                 context = "\n\n".join(n.get_content() for n in nodes)
-                answer = await asyncio.to_thread(query_anthropic, question, context)
+                # Fetch thread history if in a thread
+                history = await get_thread_history(message.channel, limit=10)
+                answer = await asyncio.to_thread(query_anthropic, question, context, history)
                 sources = format_sources(nodes)
             except Exception:
                 log.exception("Query failed")
