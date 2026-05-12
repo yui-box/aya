@@ -1,6 +1,6 @@
 # GTT Bot
 
-A local, containerized Discord bot for the [Goju Tech Talk (GTT)](https://youtube.com/@gojutechtalk) community. Answers questions grounded in an Obsidian knowledge base using RAG — local vector search for retrieval, Claude (Anthropic API) for opinionated, GTT-voiced responses.
+A local, containerized Discord bot for the [Goju Tech Talk (GTT)](https://youtube.com/@gojutechtalk) community — a space for software engineers, scientists, technology enthusiasts, and curious minds built around honest tech analysis and deep critical thinking. Answers questions grounded in an Obsidian knowledge base using RAG — local vector search for retrieval, Claude (Anthropic API) for opinionated, GTT-voiced responses.
 
 ---
 
