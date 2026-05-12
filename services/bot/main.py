@@ -529,7 +529,7 @@ async def status(interaction: discord.Interaction):
     if not is_allowed_guild(interaction.guild_id):
         await interaction.response.send_message("This bot isn't enabled in this server.", ephemeral=True)
         return
-    await interaction.response.defer()
+    await interaction.response.defer(ephemeral=True)
     try:
         from qdrant_client import QdrantClient as QC
         qc = QC(url=QDRANT_HOST)
@@ -552,10 +552,10 @@ async def status(interaction: discord.Interaction):
             f"`Cooldown` {COOLDOWN_ANTHROPIC}s (mention) · {COOLDOWN_LOCAL}s (search)\n"
             f"`Max question` {MAX_QUESTION_LENGTH} chars"
         )
-        await interaction.followup.send(msg)
+        await interaction.followup.send(msg, ephemeral=True)
     except Exception:
         log.exception("status command failed")
-        await interaction.followup.send("Something went wrong fetching status.")
+        await interaction.followup.send("Something went wrong fetching status.", ephemeral=True)
 
 
 # --- @mention: full Anthropic pipeline ---
