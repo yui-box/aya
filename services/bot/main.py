@@ -33,6 +33,9 @@ COOLDOWN_ANTHROPIC = int(os.environ.get("COOLDOWN_SECONDS", "30"))
 COOLDOWN_LOCAL = int(os.environ.get("COOLDOWN_LOCAL_SECONDS", "10"))
 MAX_QUESTION_LENGTH = int(os.environ.get("MAX_QUESTION_LENGTH", "500"))
 
+# Default thread mode from env — can be toggled per-guild at runtime via /thread-mode
+_DEFAULT_USE_THREADS = os.environ.get("USE_THREADS", "false").lower() == "true"
+
 DISCORD_MSG_LIMIT = 2000
 
 SYSTEM_PROMPT = """You are the GTT Bot, the AI assistant for Goju Tech Talk (GTT) — a community built around honest tech analysis, deep critical thinking, and the truth about AI, software engineering, and the future of programming.
@@ -133,6 +136,15 @@ def format_raw_chunks(nodes: list) -> str:
     return "\n\n".join(parts)
 
 
+def format_sources(nodes: list) -> str:
+    seen = []
+    for node in nodes:
+        source = node.metadata.get("file_name", "unknown")
+        if source not in seen:
+            seen.append(source)
+    return "**Sources:** " + " · ".join(f"`{s}`" for s in seen)
+
+
 # --- Discord setup ---
 
 intents = discord.Intents.default()
@@ -142,6 +154,13 @@ intents.guild_messages = True
 client = discord.Client(intents=intents)
 tree = app_commands.CommandTree(client)
 retriever = None
+
+# Index build time for /status
+_start_time = time.time()
+
+# Per-guild thread mode toggle — keys are guild IDs, values are bool
+# Seeded from USE_THREADS env var for any guild not explicitly toggled
+guild_thread_mode: dict[int, bool] = {}
 
 anthropic_cooldowns: dict[int, float] = {}
 local_cooldowns: dict[int, float] = {}
@@ -159,6 +178,23 @@ def is_allowed_channel(channel_id: int) -> bool:
 
 def is_allowed_guild(guild_id: int) -> bool:
     return not ALLOWED_GUILDS or guild_id in ALLOWED_GUILDS
+
+
+def get_thread_mode(guild_id: int) -> bool:
+    return guild_thread_mode.get(guild_id, _DEFAULT_USE_THREADS)
+
+
+async def send_answer(message: discord.Message, answer: str, sources: str):
+    """Send answer in a thread or inline depending on guild thread mode."""
+    full = f"{answer}\n\n{sources}"
+    use_threads = get_thread_mode(message.guild.id) if message.guild else False
+    if use_threads and isinstance(message.channel, discord.TextChannel):
+        thread = await message.create_thread(name=message.clean_content[:80] or "GTT Bot")
+        for i in range(0, len(full), DISCORD_MSG_LIMIT):
+            await thread.send(full[i : i + DISCORD_MSG_LIMIT])
+    else:
+        for i in range(0, len(full), DISCORD_MSG_LIMIT):
+            await message.reply(full[i : i + DISCORD_MSG_LIMIT])
 
 
 # --- Slash command: /knowledge-base ---
@@ -188,7 +224,7 @@ async def knowledge_base(interaction: discord.Interaction, query: str):
         return
 
     local_cooldowns[interaction.user.id] = time.time()
-    await interaction.response.defer()
+    await interaction.response.defer(ephemeral=True)
 
     try:
         nodes = await asyncio.to_thread(retrieve_context, query)
@@ -210,6 +246,66 @@ async def knowledge_base(interaction: discord.Interaction, query: str):
     except Exception:
         log.exception("knowledge-base command failed")
         await interaction.followup.send("Something went wrong with the lookup.")
+
+
+# --- Slash command: /thread-mode ---
+
+@tree.command(name="thread-mode", description="Toggle whether GTT Bot replies in threads or inline")
+@app_commands.describe(enabled="Turn thread mode on or off")
+@app_commands.choices(enabled=[
+    app_commands.Choice(name="on", value="on"),
+    app_commands.Choice(name="off", value="off"),
+])
+async def thread_mode(interaction: discord.Interaction, enabled: str):
+    if not is_allowed_guild(interaction.guild_id):
+        await interaction.response.send_message("This bot isn't enabled in this server.", ephemeral=True)
+        return
+
+    state = enabled == "on"
+    guild_thread_mode[interaction.guild_id] = state
+    status = "on — bot will reply in threads" if state else "off — bot will reply inline"
+    await interaction.response.send_message(f"Thread mode **{status}**.", ephemeral=True)
+    log.info("Thread mode set to %s for guild %s by %s", state, interaction.guild_id, interaction.user)
+
+
+# --- Slash command: /status ---
+
+@tree.command(name="status", description="Show GTT Bot status and knowledge base info")
+async def status(interaction: discord.Interaction):
+    if not is_allowed_guild(interaction.guild_id):
+        await interaction.response.send_message("This bot isn't enabled in this server.", ephemeral=True)
+        return
+
+    await interaction.response.defer()
+
+    try:
+        from qdrant_client import QdrantClient as QC
+        qc = QC(url=QDRANT_HOST)
+        info = qc.get_collection(COLLECTION)
+        vector_count = info.vectors_count or 0
+
+        uptime_seconds = int(time.time() - _start_time)
+        hours, remainder = divmod(uptime_seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        uptime_str = f"{hours}h {minutes}m {seconds}s"
+
+        thread_mode_str = "on" if get_thread_mode(interaction.guild_id) else "off"
+
+        msg = (
+            f"**GTT Bot — Status**\n\n"
+            f"`Knowledge base` {vector_count} chunks indexed\n"
+            f"`Embed model` {EMBED_MODEL}\n"
+            f"`LLM` claude-sonnet-4-5 (Anthropic API)\n"
+            f"`Thread mode` {thread_mode_str}\n"
+            f"`Uptime` {uptime_str}\n"
+            f"`Cooldown` {COOLDOWN_ANTHROPIC}s (mention) · {COOLDOWN_LOCAL}s (search)\n"
+            f"`Max question` {MAX_QUESTION_LENGTH} chars"
+        )
+        await interaction.followup.send(msg)
+
+    except Exception:
+        log.exception("status command failed")
+        await interaction.followup.send("Something went wrong fetching status.")
 
 
 # --- @mention: full Anthropic pipeline ---
@@ -256,13 +352,13 @@ async def on_message(message: discord.Message):
                 nodes = await asyncio.to_thread(retrieve_context, question)
                 context = "\n\n".join(n.get_content() for n in nodes)
                 answer = await asyncio.to_thread(query_anthropic, question, context)
+                sources = format_sources(nodes)
             except Exception:
                 log.exception("Query failed")
                 await message.reply("Something went wrong answering that.")
                 return
 
-        for i in range(0, len(answer), DISCORD_MSG_LIMIT):
-            await message.reply(answer[i : i + DISCORD_MSG_LIMIT])
+        await send_answer(message, answer, sources)
 
     except Exception:
         log.exception("Message handling failed")
