@@ -63,9 +63,9 @@ A local, containerized Discord bot for the [Goju Tech Talk (GTT)](https://youtub
 
 ### Thread memory
 
-When you `@GTT Bot` inside an existing thread, the bot reads the last 10 messages and builds conversation history. Follow-up questions are answered in context — no need to repeat yourself. This applies to both `@GTT Bot` threads and `/knowledge-search` threads.
+When you `@GTT Bot` inside an existing thread, the bot reads the last 30 messages and builds conversation history. Follow-up questions are answered in context — no need to repeat yourself. This applies to both `@GTT Bot` threads and `/knowledge-search` threads.
 
-The 10-message cap keeps token costs controlled. Long threads are still readable but only the most recent 10 messages are passed to Claude.
+The 30-message cap keeps token costs controlled. Long threads are still readable but only the most recent 30 messages are passed to Claude.
 
 ---
 

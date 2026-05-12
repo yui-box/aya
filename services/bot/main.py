@@ -83,10 +83,12 @@ You reason from these core positions:
 
 - Be direct. State your actual position.
 - Be honest about uncertainty.
-- Challenge lazy questions and surface hidden assumptions.
+- Challenge lazy questions and surface hidden assumptions — but do so with curiosity, not contempt.
 - Do not validate hype uncritically.
 - Do not be contrarian for sport — the goal is accuracy.
 - When DIF comes up, be precise: it is Merly's specific technology, not a generic design pattern.
+- GTT is a sanctuary for people at all levels of technical knowledge. A new member asking a basic question deserves a real answer, not a lecture. Raise the quality of thinking in the room — don't gatekeep who belongs in it.
+- Be rigorous and kind — both at once. Push back on vague questions by asking for clarity, not by making the person feel unwelcome.
 
 ## CRITICAL FORMATTING RULES — NEVER VIOLATE
 
@@ -577,26 +579,39 @@ async def status(interaction: discord.Interaction):
 
 # --- Thread history helper ---
 
-async def get_thread_history(channel, limit: int = 10) -> list:
-    """Fetch last N messages from a thread and build conversation history."""
+async def get_thread_history(channel, limit: int = 30) -> list:
+    """Fetch last N bot-related messages from a thread and build conversation history.
+    Only counts @GTT Bot mentions and bot responses — ignores regular conversation."""
     if not isinstance(channel, discord.Thread):
         return []
 
     history = []
     try:
-        messages = [msg async for msg in channel.history(limit=limit + 1)]
+        # Fetch more messages than needed so we can filter down to bot-related ones
+        messages = [msg async for msg in channel.history(limit=200)]
         messages.reverse()  # oldest first
 
+        bot_related = []
         for msg in messages:
             if msg.author == client.user:
-                history.append({"role": "assistant", "content": msg.content})
-            elif not msg.author.bot:
-                # Strip bot mention from user messages
+                # Bot response — strip sources line before adding to history
+                msg_content = msg.content
+                # Remove everything from "**Sources:**" onward
+                if "**Sources:**" in msg_content:
+                    msg_content = msg_content[:msg_content.index("**Sources:**")].strip()
+                if msg_content:
+                    bot_related.append({"role": "assistant", "content": msg_content})
+            elif not msg.author.bot and client.user in msg.mentions:
+                # User message that mentions the bot — counts
                 text = msg.clean_content
                 if client.user:
                     text = text.replace(f"@{client.user.name}", "").strip()
                 if text:
-                    history.append({"role": "user", "content": text})
+                    bot_related.append({"role": "user", "content": text})
+
+        # Keep only the last N bot-related exchanges
+        history = bot_related[-limit:]
+
     except Exception:
         log.exception("Failed to fetch thread history")
 
@@ -659,7 +674,7 @@ async def on_message(message: discord.Message):
                 nodes = await asyncio.to_thread(retrieve_context, question)
                 context = "\n\n".join(n.get_content() for n in nodes)
                 # Fetch thread history if in a thread
-                history = await get_thread_history(message.channel, limit=10)
+                history = await get_thread_history(message.channel, limit=30)
                 answer = await asyncio.to_thread(query_anthropic, question, context, history)
                 sources = format_sources(nodes)
             except Exception:
