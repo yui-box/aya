@@ -7,7 +7,6 @@ services:
     volumes:
       - ollama_data:/root/.ollama
     restart: unless-stopped
-    # Remove: deploy.resources.reservations.devices
 
   qdrant:
     image: qdrant/qdrant:latest
@@ -49,6 +48,10 @@ services:
       EMBED_MODEL: ${EMBED_MODEL:-nomic-embed-text}
       QDRANT_COLLECTION: ${QDRANT_COLLECTION:-vault}
       TOP_K: ${TOP_K:-5}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      ALLOWED_CHANNELS: ${ALLOWED_CHANNELS:-}
+      COOLDOWN_SECONDS: ${COOLDOWN_SECONDS:-30}
+      COOLDOWN_LOCAL_SECONDS: ${COOLDOWN_LOCAL_SECONDS:-10}
     volumes:
       - ${VAULT_PATH}:/vault:ro
     restart: unless-stopped
