@@ -35,6 +35,7 @@ REQUIRED_ROLE = os.environ.get("REQUIRED_ROLE", "").strip()
 COOLDOWN_ANTHROPIC = int(os.environ.get("COOLDOWN_SECONDS", "30"))
 COOLDOWN_LOCAL = int(os.environ.get("COOLDOWN_LOCAL_SECONDS", "10"))
 MAX_QUESTION_LENGTH = int(os.environ.get("MAX_QUESTION_LENGTH", "500"))
+THREAD_HISTORY_LIMIT = int(os.environ.get("THREAD_HISTORY_LIMIT", "30"))
 
 # Automod config
 MOD_CHANNEL_ID = int(os.environ.get("MOD_CHANNEL_ID", "0"))
@@ -337,6 +338,10 @@ async def check_automod(message: discord.Message):
     if not isinstance(member, discord.Member):
         return
 
+    # Skip automod entirely for members with roles above GTT Bot in the hierarchy
+    if not can_be_timed_out(member):
+        return
+
     content = message.content
     rule = None
     timeout_duration = None
@@ -579,7 +584,7 @@ async def status(interaction: discord.Interaction):
 
 # --- Thread history helper ---
 
-async def get_thread_history(channel, limit: int = 30) -> list:
+async def get_thread_history(channel, limit: int = THREAD_HISTORY_LIMIT) -> list:
     """Fetch last N bot-related messages from a thread and build conversation history.
     Only counts @GTT Bot mentions and bot responses — ignores regular conversation."""
     if not isinstance(channel, discord.Thread):
@@ -674,7 +679,7 @@ async def on_message(message: discord.Message):
                 nodes = await asyncio.to_thread(retrieve_context, question)
                 context = "\n\n".join(n.get_content() for n in nodes)
                 # Fetch thread history if in a thread
-                history = await get_thread_history(message.channel, limit=30)
+                history = await get_thread_history(message.channel, limit=THREAD_HISTORY_LIMIT)
                 answer = await asyncio.to_thread(query_anthropic, question, context, history)
                 sources = format_sources(nodes)
             except Exception:
