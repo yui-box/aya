@@ -155,6 +155,45 @@ def format_raw_chunks(nodes: list) -> str:
     return "\n\n".join(parts)
 
 
+def format_raw_chunks_plain(nodes: list) -> str:
+    """Plain text version for DMs — blockquotes and inline code, renders cleanly."""
+    parts = []
+    for i, node in enumerate(nodes, 1):
+        source = node.metadata.get("file_name", f"chunk {i}")
+        chunk_content = node.get_content().strip()
+        # Strip the first line if it matches the filename stem (title line)
+        stem = source.replace(".md", "")
+        lines = chunk_content.splitlines()
+        if lines and lines[0].strip() == stem:
+            lines = lines[1:]
+        chunk_content = "\n".join(lines).strip()
+        # Indent each line as a blockquote
+        quoted = "\n".join(f"> {line}" if line.strip() else ">" for line in chunk_content.splitlines())
+        parts.append(f"**[{i}]** `{source}`\n{quoted}")
+    return "\n\n---\n\n".join(parts)
+
+
+def split_at_sentence(text: str, limit: int = 1950) -> list[str]:
+    """Split text at sentence boundaries instead of hard cutting at limit."""
+    if len(text) <= limit:
+        return [text]
+    chunks = []
+    while len(text) > limit:
+        # Find the last sentence end before the limit
+        cut = text.rfind(". ", 0, limit)
+        if cut == -1:
+            cut = text.rfind("\n", 0, limit)
+        if cut == -1:
+            cut = limit
+        else:
+            cut += 1  # include the period
+        chunks.append(text[:cut].strip())
+        text = text[cut:].strip()
+    if text:
+        chunks.append(text)
+    return chunks
+
+
 def format_sources(nodes: list) -> str:
     seen = []
     for node in nodes:
@@ -358,9 +397,14 @@ async def knowledge_base(interaction: discord.Interaction, query: str):
 
         try:
             dm = await interaction.user.create_dm()
-            await dm.send(summary_msg[:DISCORD_MSG_LIMIT])
-            for i in range(0, len(raw_msg), DISCORD_MSG_LIMIT):
-                await dm.send(raw_msg[i : i + DISCORD_MSG_LIMIT])
+            # Use plain format for DMs — no code blocks
+            raw_plain = format_raw_chunks_plain(nodes)
+            summary_msg_dm = f"**Knowledge Base — Summary**\n\n{summary}"
+            raw_msg_dm = f"**Knowledge Base — Raw Chunks**\n\n{raw_plain}"
+            for chunk in split_at_sentence(summary_msg_dm):
+                await dm.send(chunk)
+            for chunk in split_at_sentence(raw_msg_dm):
+                await dm.send(chunk)
             await interaction.followup.send("Results sent to your DMs.", ephemeral=True)
             log.info("knowledge-base results DM'd to %s", interaction.user)
         except discord.Forbidden:
@@ -374,6 +418,83 @@ async def knowledge_base(interaction: discord.Interaction, query: str):
     except Exception:
         log.exception("knowledge-base command failed")
         await interaction.followup.send("Something went wrong with the lookup.", ephemeral=True)
+
+
+# --- Slash command: /knowledge-search ---
+
+@tree.command(name="knowledge-search", description="Search the GTT vault in a private thread (visible to mods)")
+@app_commands.describe(query="What do you want to look up in the knowledge base?")
+async def knowledge_search(interaction: discord.Interaction, query: str):
+    if not is_allowed_guild(interaction.guild_id):
+        await interaction.response.send_message("This bot isn't enabled in this server.", ephemeral=True)
+        return
+
+    if not is_allowed_channel(interaction.channel_id):
+        await interaction.response.send_message("This command isn't enabled in this channel.", ephemeral=True)
+        return
+
+    if len(query) > MAX_QUESTION_LENGTH:
+        await interaction.response.send_message(
+            f"Query too long — keep it under {MAX_QUESTION_LENGTH} characters.", ephemeral=True
+        )
+        return
+
+    remaining = check_cooldown(interaction.user.id, local_cooldowns, COOLDOWN_LOCAL)
+    if remaining > 0:
+        await interaction.response.send_message(
+            f"Slow down — you can search again in {int(remaining) + 1}s.", ephemeral=True
+        )
+        return
+
+    local_cooldowns[interaction.user.id] = time.time()
+    await interaction.response.defer(ephemeral=True)
+
+    try:
+        nodes = await asyncio.to_thread(retrieve_context, query)
+
+        if not nodes:
+            await interaction.followup.send("Nothing found in the knowledge base for that query.", ephemeral=True)
+            return
+
+        summary = extractive_summary(nodes)
+        raw_plain = format_raw_chunks_plain(nodes)
+        summary_msg = f"**Knowledge Base — Summary**\n\n{summary}"
+        raw_msg = f"**Knowledge Base — Raw Chunks**\n\n{raw_plain}"
+
+        # Create a private thread visible only to the user and mods
+        channel = interaction.channel
+        if not isinstance(channel, discord.TextChannel):
+            await interaction.followup.send("Private threads only work in text channels.", ephemeral=True)
+            return
+
+        thread_name = f"{interaction.user.display_name}: {query[:50]}"
+        thread = await channel.create_thread(
+            name=thread_name,
+            type=discord.ChannelType.private_thread,
+            invitable=False,  # only mods can add others
+        )
+
+        # Add the user to the thread
+        await thread.add_user(interaction.user)
+
+        # Send results into the thread
+        for chunk in split_at_sentence(summary_msg):
+            await thread.send(chunk)
+        for chunk in split_at_sentence(raw_msg):
+            await thread.send(chunk)
+
+        await interaction.followup.send(
+            f"Your results are in a private thread: {thread.mention}", ephemeral=True
+        )
+        log.info("knowledge-search private thread created for %s", interaction.user)
+
+    except discord.Forbidden:
+        await interaction.followup.send(
+            "Could not create a private thread — check bot permissions.", ephemeral=True
+        )
+    except Exception:
+        log.exception("knowledge-search command failed")
+        await interaction.followup.send("Something went wrong with the search.", ephemeral=True)
 
 
 # --- Slash command: /thread-mode ---
