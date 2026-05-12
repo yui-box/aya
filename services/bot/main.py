@@ -1,7 +1,9 @@
 import os
+import re
 import logging
 import asyncio
 import time
+from datetime import timedelta
 
 import discord
 from discord import app_commands
@@ -34,10 +36,26 @@ COOLDOWN_ANTHROPIC = int(os.environ.get("COOLDOWN_SECONDS", "30"))
 COOLDOWN_LOCAL = int(os.environ.get("COOLDOWN_LOCAL_SECONDS", "10"))
 MAX_QUESTION_LENGTH = int(os.environ.get("MAX_QUESTION_LENGTH", "500"))
 
+# Automod config
+MOD_CHANNEL_ID = int(os.environ.get("MOD_CHANNEL_ID", "0"))
+GENERAL_CHANNEL_ID = int(os.environ.get("GENERAL_CHANNEL_ID", "0"))
+NEW_ACCOUNT_DAYS = int(os.environ.get("NEW_ACCOUNT_DAYS", "7"))
+SUSPICIOUS_MSG_LENGTH = int(os.environ.get("SUSPICIOUS_MSG_LENGTH", "200"))
+REQUIRED_ROLE_FOR_AUTOMOD = os.environ.get("REQUIRED_ROLE", "GTT Sub Level 0").strip()
+
 # Default thread mode from env — can be toggled per-guild at runtime via /thread-mode
 _DEFAULT_USE_THREADS = os.environ.get("USE_THREADS", "false").lower() == "true"
 
 DISCORD_MSG_LIMIT = 2000
+
+# Self-promo patterns loaded from env — kept private, not in source code
+# Format: comma-separated plain phrases, e.g. "follow me,subscribe,dm me"
+_raw_patterns = os.environ.get("SELF_PROMO_PATTERNS", "")
+if _raw_patterns:
+    _terms = [re.escape(t.strip()) for t in _raw_patterns.split(",") if t.strip()]
+    SELF_PROMO_PATTERNS = re.compile("|".join(f"\\b{t}\\b" for t in _terms), re.IGNORECASE) if _terms else None
+else:
+    SELF_PROMO_PATTERNS = None
 
 SYSTEM_PROMPT = """You are the GTT Bot, the AI assistant for Goju Tech Talk (GTT) — a community built around honest tech analysis, deep critical thinking, and the truth about AI, software engineering, and the future of programming.
 
@@ -147,10 +165,55 @@ def format_sources(nodes: list) -> str:
 
 
 def has_required_role(member: discord.Member) -> bool:
-    """Return True if REQUIRED_ROLE is unset or the member has that role."""
     if not REQUIRED_ROLE:
         return True
     return any(role.name == REQUIRED_ROLE for role in member.roles)
+
+
+def can_be_timed_out(member: discord.Member) -> bool:
+    """Returns False for admins and members with roles above the bot."""
+    if member.guild_permissions.administrator:
+        return False
+    me = member.guild.me
+    if me and member.top_role >= me.top_role:
+        return False
+    return True
+
+
+async def send_mod_alert(guild: discord.Guild, member: discord.Member,
+                         rule: str, message_content: str, timed_out: bool,
+                         timeout_duration=None, flag_only: bool = False):
+    """Post an alert to the mod channel."""
+    if not MOD_CHANNEL_ID:
+        return
+    mod_channel = guild.get_channel(MOD_CHANNEL_ID)
+    if not mod_channel:
+        return
+
+    account_age = (discord.utils.utcnow() - member.created_at).days
+    minutes = int(timeout_duration.total_seconds() // 60) if timeout_duration else 0
+    if minutes >= 60 * 24:
+        duration_str = f"{minutes // (60 * 24)} day(s)"
+    else:
+        duration_str = f"{minutes} min"
+    if flag_only:
+        timeout_status = "👀 No action taken — flagged for mod review"
+    elif timed_out:
+        timeout_status = f"✅ Timed out ({duration_str})"
+    else:
+        timeout_status = "⚠️ Could not time out (role too high)"
+
+    alert = (
+        f"🚨 **Automod Alert**\n\n"
+        f"**User:** {member.mention} (`{member}` · ID: `{member.id}`)\n"
+        f"**Account age:** {account_age} days\n"
+        f"**Rule triggered:** {rule}\n"
+        f"**Action:** {timeout_status}\n"
+        f"**Message:**\n> {message_content[:500]}\n\n"
+        f"Mods: review and take action if needed."
+    )
+    await mod_channel.send(alert)
+    log.info("Automod alert sent for %s — rule: %s", member, rule)
 
 
 # --- Discord setup ---
@@ -158,18 +221,14 @@ def has_required_role(member: discord.Member) -> bool:
 intents = discord.Intents.default()
 intents.message_content = True
 intents.guild_messages = True
-intents.members = True  # needed to read member roles
+intents.members = True
 
 client = discord.Client(intents=intents)
 tree = app_commands.CommandTree(client)
 retriever = None
 
-# Index build time for /status
 _start_time = time.time()
-
-# Per-guild thread mode toggle
 guild_thread_mode: dict[int, bool] = {}
-
 anthropic_cooldowns: dict[int, float] = {}
 local_cooldowns: dict[int, float] = {}
 
@@ -193,7 +252,6 @@ def get_thread_mode(guild_id: int) -> bool:
 
 
 async def send_answer(message: discord.Message, answer: str, sources: str):
-    """Send answer in a thread or inline depending on guild thread mode."""
     full = f"{answer}\n\n{sources}"
     use_threads = get_thread_mode(message.guild.id) if message.guild else False
     if use_threads and isinstance(message.channel, discord.TextChannel):
@@ -205,6 +263,64 @@ async def send_answer(message: discord.Message, answer: str, sources: str):
             await message.reply(full[i : i + DISCORD_MSG_LIMIT])
 
 
+# --- Automod handler ---
+
+async def check_automod(message: discord.Message):
+    """Check message for automod rules and take action if triggered."""
+    if not message.guild:
+        return
+    member = message.author
+    if not isinstance(member, discord.Member):
+        return
+
+    content = message.content
+    rule = None
+    timeout_duration = None
+
+    # Rule 1: @everyone or @here attempt — any channel, 1 minute timeout
+    if "@everyone" in content or "@here" in content:
+        rule = "`@everyone` / `@here` attempt"
+        timeout_duration = timedelta(minutes=1)
+
+    # Rule 2: Self-promo in #general — indefinite timeout (28 days)
+    elif message.channel.id == GENERAL_CHANNEL_ID and SELF_PROMO_PATTERNS and SELF_PROMO_PATTERNS.search(content):
+        rule = "Self-promotion in `#general`"
+        timeout_duration = timedelta(days=28)
+
+    # Rule 3: New account + no role + long message in #general → flag only, no timeout
+    if (not rule and
+            message.channel.id == GENERAL_CHANNEL_ID and
+            len(content) > SUSPICIOUS_MSG_LENGTH):
+        account_age = (discord.utils.utcnow() - member.created_at).days
+        has_role = any(r.name == REQUIRED_ROLE_FOR_AUTOMOD for r in member.roles)
+        if account_age < NEW_ACCOUNT_DAYS and not has_role:
+            await send_mod_alert(
+                message.guild, member,
+                f"New account ({account_age}d old), no `{REQUIRED_ROLE_FOR_AUTOMOD}` role, long message in `#general`",
+                content,
+                timed_out=False,
+                timeout_duration=None,
+                flag_only=True,
+            )
+        return
+
+    if not rule:
+        return
+
+    timed_out = False
+    if can_be_timed_out(member) and timeout_duration:
+        try:
+            await member.timeout(timeout_duration, reason=f"Automod: {rule}")
+            timed_out = True
+            log.info("Timed out %s for rule: %s", member, rule)
+        except discord.Forbidden:
+            log.warning("Could not time out %s — missing permissions", member)
+        except Exception:
+            log.exception("Timeout failed for %s", member)
+
+    await send_mod_alert(message.guild, member, rule, content, timed_out, timeout_duration=timeout_duration)
+
+
 # --- Slash command: /knowledge-base ---
 
 @tree.command(name="knowledge-base", description="Search the GTT vault directly (local, no API cost)")
@@ -213,22 +329,17 @@ async def knowledge_base(interaction: discord.Interaction, query: str):
     if not is_allowed_guild(interaction.guild_id):
         await interaction.response.send_message("This bot isn't enabled in this server.", ephemeral=True)
         return
-
     if not is_allowed_channel(interaction.channel_id):
         await interaction.response.send_message("This command isn't enabled in this channel.", ephemeral=True)
         return
-
     if len(query) > MAX_QUESTION_LENGTH:
         await interaction.response.send_message(
-            f"Query too long — keep it under {MAX_QUESTION_LENGTH} characters.", ephemeral=True
-        )
+            f"Query too long — keep it under {MAX_QUESTION_LENGTH} characters.", ephemeral=True)
         return
-
     remaining = check_cooldown(interaction.user.id, local_cooldowns, COOLDOWN_LOCAL)
     if remaining > 0:
         await interaction.response.send_message(
-            f"Slow down — you can search again in {int(remaining) + 1}s.", ephemeral=True
-        )
+            f"Slow down — you can search again in {int(remaining) + 1}s.", ephemeral=True)
         return
 
     local_cooldowns[interaction.user.id] = time.time()
@@ -236,42 +347,29 @@ async def knowledge_base(interaction: discord.Interaction, query: str):
 
     try:
         nodes = await asyncio.to_thread(retrieve_context, query)
-
         if not nodes:
             await interaction.followup.send("Nothing found in the knowledge base for that query.", ephemeral=True)
             return
 
         summary = extractive_summary(nodes)
         raw = format_raw_chunks(nodes)
-
         summary_msg = f"**Knowledge Base — Summary**\n\n{summary}"
         raw_msg = f"**Knowledge Base — Raw Chunks**\n\n{raw}"
 
-        # Try DM first — cleaner and fully private
         try:
             dm = await interaction.user.create_dm()
             await dm.send(summary_msg[:DISCORD_MSG_LIMIT])
             for i in range(0, len(raw_msg), DISCORD_MSG_LIMIT):
                 await dm.send(raw_msg[i : i + DISCORD_MSG_LIMIT])
-            await interaction.followup.send(
-                "Results sent to your DMs.", ephemeral=True
-            )
+            await interaction.followup.send("Results sent to your DMs.", ephemeral=True)
             log.info("knowledge-base results DM'd to %s", interaction.user)
-
         except discord.Forbidden:
-            # User has DMs disabled — fall back to ephemeral in channel
             log.info("DM failed for %s, falling back to ephemeral", interaction.user)
-            await interaction.followup.send(
-                summary_msg[:DISCORD_MSG_LIMIT], ephemeral=True
-            )
+            await interaction.followup.send(summary_msg[:DISCORD_MSG_LIMIT], ephemeral=True)
             for i in range(0, len(raw_msg), DISCORD_MSG_LIMIT):
-                await interaction.followup.send(
-                    raw_msg[i : i + DISCORD_MSG_LIMIT], ephemeral=True
-                )
+                await interaction.followup.send(raw_msg[i : i + DISCORD_MSG_LIMIT], ephemeral=True)
             await interaction.followup.send(
-                "Enable DMs from server members to receive results privately next time.",
-                ephemeral=True,
-            )
+                "Enable DMs from server members to receive results privately next time.", ephemeral=True)
 
     except Exception:
         log.exception("knowledge-base command failed")
@@ -290,7 +388,6 @@ async def thread_mode(interaction: discord.Interaction, enabled: str):
     if not is_allowed_guild(interaction.guild_id):
         await interaction.response.send_message("This bot isn't enabled in this server.", ephemeral=True)
         return
-
     state = enabled == "on"
     guild_thread_mode[interaction.guild_id] = state
     status = "on — bot will reply in threads" if state else "off — bot will reply inline"
@@ -305,23 +402,18 @@ async def status(interaction: discord.Interaction):
     if not is_allowed_guild(interaction.guild_id):
         await interaction.response.send_message("This bot isn't enabled in this server.", ephemeral=True)
         return
-
     await interaction.response.defer()
-
     try:
         from qdrant_client import QdrantClient as QC
         qc = QC(url=QDRANT_HOST)
         info = qc.get_collection(COLLECTION)
         vector_count = info.vectors_count or 0
-
         uptime_seconds = int(time.time() - _start_time)
         hours, remainder = divmod(uptime_seconds, 3600)
         minutes, seconds = divmod(remainder, 60)
         uptime_str = f"{hours}h {minutes}m {seconds}s"
-
         thread_mode_str = "on" if get_thread_mode(interaction.guild_id) else "off"
         role_str = f"`{REQUIRED_ROLE}`" if REQUIRED_ROLE else "all members"
-
         msg = (
             f"**GTT Bot — Status**\n\n"
             f"`Knowledge base` {vector_count} chunks indexed\n"
@@ -334,7 +426,6 @@ async def status(interaction: discord.Interaction):
             f"`Max question` {MAX_QUESTION_LENGTH} chars"
         )
         await interaction.followup.send(msg)
-
     except Exception:
         log.exception("status command failed")
         await interaction.followup.send("Something went wrong fetching status.")
@@ -349,31 +440,35 @@ async def on_ready():
     log.info("Logged in as %s", client.user)
     if REQUIRED_ROLE:
         log.info("API access restricted to role: %s", REQUIRED_ROLE)
+    if MOD_CHANNEL_ID:
+        log.info("Automod alerts → channel %s", MOD_CHANNEL_ID)
 
 
 @client.event
 async def on_message(message: discord.Message):
     if message.author == client.user:
         return
+    if isinstance(message.author, discord.Member) and message.author.bot:
+        return
+
+    # Run automod on all guild messages (before bot-specific checks)
+    if message.guild:
+        await check_automod(message)
+
     if client.user not in message.mentions:
         return
     if message.guild and not is_allowed_guild(message.guild.id):
         return
     if not is_allowed_channel(message.channel.id):
         return
-
-    # Role check — only applies to guild messages
     if message.guild and not has_required_role(message.author):
         await message.reply(
-            f"You need the **{REQUIRED_ROLE}** role to use this.",
-            delete_after=10,
-        )
+            f"You need the **{REQUIRED_ROLE}** role to use this.", delete_after=10)
         return
 
     question = message.clean_content.replace(f"@{client.user.name}", "").strip()
     if not question:
         return
-
     if len(question) > MAX_QUESTION_LENGTH:
         await message.reply(f"Keep it under {MAX_QUESTION_LENGTH} characters.")
         return
@@ -381,9 +476,7 @@ async def on_message(message: discord.Message):
     remaining = check_cooldown(message.author.id, anthropic_cooldowns, COOLDOWN_ANTHROPIC)
     if remaining > 0:
         await message.reply(
-            f"Slow down — you can ask again in {int(remaining) + 1}s.",
-            delete_after=5,
-        )
+            f"Slow down — you can ask again in {int(remaining) + 1}s.", delete_after=5)
         return
 
     anthropic_cooldowns[message.author.id] = time.time()
@@ -399,9 +492,7 @@ async def on_message(message: discord.Message):
                 log.exception("Query failed")
                 await message.reply("Something went wrong answering that.")
                 return
-
         await send_answer(message, answer, sources)
-
     except Exception:
         log.exception("Message handling failed")
 
