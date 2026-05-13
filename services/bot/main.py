@@ -1138,6 +1138,7 @@ async def on_message(message: discord.Message):
     reactions="Include reactions (slower, default: no)"
 )
 @app_commands.choices(format=[
+    app_commands.Choice(name="all", value="all"),
     app_commands.Choice(name="text", value="text"),
     app_commands.Choice(name="json", value="json"),
     app_commands.Choice(name="html", value="html"),
@@ -1146,7 +1147,7 @@ async def on_message(message: discord.Message):
     app_commands.Choice(name="yes", value="yes"),
     app_commands.Choice(name="no", value="no"),
 ])
-async def export_state(interaction: discord.Interaction, format: str = "json", reactions: str = "no"):
+async def export_state(interaction: discord.Interaction, format: str = "all", reactions: str = "no"):
     import json as json_lib
     from pathlib import Path
 
@@ -1231,52 +1232,55 @@ async def export_state(interaction: discord.Interaction, format: str = "json", r
                     if msg.reactions:
                         reactions_map[str(msg.id)] = await fetch_reactions(msg)
 
-            # Append to existing file in latest/ or create new
-            ext = "txt" if format == "text" else format
-            filepath = latest_dir / f"{channel.name}.{ext}"
 
-            if format == "text":
-                lines = []
-                for msg in messages:
-                    ts = msg.created_at.strftime("%Y-%m-%d %H:%M")
-                    rxn = reactions_map.get(str(msg.id), {})
-                    rxn_str = " " + " ".join(f"{e}({len(u)})" for e, u in rxn.items()) if rxn else ""
-                    lines.append(f"[{ts}] {msg.author.display_name}: {msg.content}{rxn_str}")
-                new_content = "\n".join(lines)
-                if filepath.exists() and not is_bootstrap:
-                    existing = filepath.read_text(encoding="utf-8")
-                    filepath.write_text(existing + "\n" + new_content, encoding="utf-8")
-                else:
-                    filepath.write_text(new_content, encoding="utf-8")
+            # Write all requested formats
+            formats_to_write = ["text", "json", "html"] if format == "all" else [format]
 
-            elif format == "json":
-                records = [message_to_dict(msg, reactions_map.get(str(msg.id))) for msg in messages]
-                if filepath.exists() and not is_bootstrap:
-                    existing = json_lib.loads(filepath.read_text(encoding="utf-8"))
-                    existing.extend(records)
-                    filepath.write_text(json_lib.dumps(existing, indent=2, ensure_ascii=False), encoding="utf-8")
-                else:
-                    filepath.write_text(json_lib.dumps(records, indent=2, ensure_ascii=False), encoding="utf-8")
+            for fmt in formats_to_write:
+                ext = "txt" if fmt == "text" else fmt
+                fpath = latest_dir / f"{channel.name}.{ext}"
 
-            elif format == "html":
-                rows = []
-                for msg in messages:
-                    ts = msg.created_at.strftime("%Y-%m-%d %H:%M")
-                    author = discord.utils.escape_markdown(msg.author.display_name)
-                    body = discord.utils.escape_markdown(msg.content).replace("\n", "<br>")
-                    rxn = reactions_map.get(str(msg.id), {})
-                    rxn_str = " ".join(f'<span class="rxn">{e} {len(u)}</span>' for e, u in rxn.items())
-                    rows.append(
-                        f'<tr><td class="ts">{ts}</td><td class="author">{author}</td>'
-                        f'<td class="content">{body} {rxn_str}</td></tr>'
-                    )
-                new_rows = "\n".join(rows)
-                if filepath.exists() and not is_bootstrap:
-                    # Append rows before closing </table>
-                    existing = filepath.read_text(encoding="utf-8")
-                    filepath.write_text(existing.replace("</table>", new_rows + "\n</table>"), encoding="utf-8")
-                else:
-                    html = f"""<!DOCTYPE html>
+                if fmt == "text":
+                    lines_out = []
+                    for msg in messages:
+                        ts = msg.created_at.strftime("%Y-%m-%d %H:%M")
+                        rxn = reactions_map.get(str(msg.id), {})
+                        rxn_str = " " + " ".join(f"{e}({len(u)})" for e, u in rxn.items()) if rxn else ""
+                        lines_out.append(f"[{ts}] {msg.author.display_name}: {msg.content}{rxn_str}")
+                    new_content = "\n".join(lines_out)
+                    if fpath.exists() and not is_bootstrap:
+                        existing = fpath.read_text(encoding="utf-8")
+                        fpath.write_text(existing + "\n" + new_content, encoding="utf-8")
+                    else:
+                        fpath.write_text(new_content, encoding="utf-8")
+
+                elif fmt == "json":
+                    records = [message_to_dict(msg, reactions_map.get(str(msg.id))) for msg in messages]
+                    if fpath.exists() and not is_bootstrap:
+                        existing = json_lib.loads(fpath.read_text(encoding="utf-8"))
+                        existing.extend(records)
+                        fpath.write_text(json_lib.dumps(existing, indent=2, ensure_ascii=False), encoding="utf-8")
+                    else:
+                        fpath.write_text(json_lib.dumps(records, indent=2, ensure_ascii=False), encoding="utf-8")
+
+                elif fmt == "html":
+                    rows = []
+                    for msg in messages:
+                        ts = msg.created_at.strftime("%Y-%m-%d %H:%M")
+                        author = discord.utils.escape_markdown(msg.author.display_name)
+                        body = discord.utils.escape_markdown(msg.content).replace("\n", "<br>")
+                        rxn = reactions_map.get(str(msg.id), {})
+                        rxn_str = " ".join(f'<span class="rxn">{e} {len(u)}</span>' for e, u in rxn.items())
+                        rows.append(
+                            f'<tr><td class="ts">{ts}</td><td class="author">{author}</td>'
+                            f'<td class="content">{body} {rxn_str}</td></tr>'
+                        )
+                    new_rows = "\n".join(rows)
+                    if fpath.exists() and not is_bootstrap:
+                        existing = fpath.read_text(encoding="utf-8")
+                        fpath.write_text(existing.replace("</table>", new_rows + "\n</table>"), encoding="utf-8")
+                    else:
+                        html_out = f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>{channel.name}</title>
 <style>body{{font-family:sans-serif;background:#1e1e2e;color:#cdd6f4;padding:20px}}
 table{{border-collapse:collapse;width:100%}}td{{padding:4px 8px;vertical-align:top;border-bottom:1px solid #313244}}
@@ -1284,7 +1288,7 @@ table{{border-collapse:collapse;width:100%}}td{{padding:4px 8px;vertical-align:t
 .content{{word-break:break-word}}.rxn{{background:#313244;border-radius:4px;padding:2px 6px;margin:2px;font-size:0.85em}}
 </style></head><body>
 <h2>#{channel.name}</h2><table>{new_rows}</table></body></html>"""
-                    filepath.write_text(html, encoding="utf-8")
+                        fpath.write_text(html_out, encoding="utf-8")
 
             # Download new attachments
             att_dir = latest_dir / f"{channel.name}-attachments"
