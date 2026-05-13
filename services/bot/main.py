@@ -5,6 +5,7 @@ import asyncio
 import time
 from datetime import timedelta
 
+import aiohttp
 import discord
 from discord import app_commands
 import anthropic
@@ -623,6 +624,48 @@ async def get_thread_history(channel, limit: int = THREAD_HISTORY_LIMIT) -> list
     return history
 
 
+# --- Attachment downloader helper ---
+
+async def download_attachments(messages: list, attachments_dir) -> int:
+    """Download all attachments from messages to a local folder. Returns count downloaded."""
+    from pathlib import Path
+    attachments_dir = Path(attachments_dir)
+    attachments_dir.mkdir(parents=True, exist_ok=True)
+    count = 0
+    async with aiohttp.ClientSession() as session:
+        for msg in messages:
+            for attachment in msg.attachments:
+                try:
+                    safe_name = f"{msg.id}_{attachment.filename}"
+                    filepath = attachments_dir / safe_name
+                    async with session.get(attachment.url) as resp:
+                        if resp.status == 200:
+                            data = await resp.read()
+                            filepath.write_bytes(data)
+                            count += 1
+                except Exception:
+                    log.warning("Failed to download attachment %s", attachment.url)
+    return count
+
+
+# --- URL extractor helper ---
+
+URL_RE = re.compile(r"https?://\S+")
+
+def extract_urls(messages: list) -> str:
+    """Extract all URLs from messages into a deduplicated list."""
+    seen = []
+    lines = []
+    for msg in messages:
+        urls = URL_RE.findall(msg.content)
+        for url in urls:
+            if url not in seen:
+                seen.append(url)
+                ts = msg.created_at.strftime("%Y-%m-%d %H:%M")
+                lines.append(f"[{ts}] {msg.author.display_name}: {url}")
+    return "\n".join(lines)
+
+
 # --- Slash command: /export ---
 
 @tree.command(name="export", description="Export channel history to a file (GTT Team only)")
@@ -729,20 +772,61 @@ td {{ padding: 4px 8px; vertical-align: top; border-bottom: 1px solid #313244; }
         import io
         file = discord.File(io.BytesIO(file_bytes), filename=filename)
 
-        # Send as DM
-        try:
-            dm = await interaction.user.create_dm()
-            await dm.send(
-                f"Export of #{channel.name} — {len(messages)} messages ({format})",
-                file=file
-            )
-            await interaction.followup.send("Export sent to your DMs.", ephemeral=True)
-            log.info("Exported %d messages from %s as %s for %s",
-                     len(messages), channel.name, format, interaction.user)
-        except discord.Forbidden:
-            await interaction.followup.send(
-                "Could not DM you the export — enable DMs from server members.", ephemeral=True
-            )
+        # Download attachments to temp folder then zip with export
+        from pathlib import Path
+        import tempfile, zipfile
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmpdir = Path(tmpdir)
+            export_file = tmpdir / filename
+            export_file.write_bytes(file_bytes)
+            att_dir = tmpdir / f"{channel.name}-attachments"
+            att_count = await download_attachments(messages, att_dir)
+
+            # Extract URLs
+            urls_content = extract_urls(messages)
+            if urls_content:
+                urls_file = tmpdir / f"{channel.name}-urls.txt"
+                urls_file.write_text(urls_content, encoding="utf-8")
+            else:
+                urls_file = None
+
+            # Zip everything together
+            zip_path = tmpdir / f"{channel.name}-{discord.utils.utcnow().strftime('%Y%m%d-%H%M%S')}.zip"
+            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+                zf.write(export_file, export_file.name)
+                if att_count > 0:
+                    for att_file in att_dir.iterdir():
+                        zf.write(att_file, f"attachments/{att_file.name}")
+                if urls_file and urls_file.exists():
+                    zf.write(urls_file, urls_file.name)
+
+            zip_bytes = zip_path.read_bytes()
+
+        if len(zip_bytes) > 25 * 1024 * 1024:
+            # Too big for Discord — send text file only
+            file = discord.File(io.BytesIO(file_bytes), filename=filename)
+            try:
+                dm = await interaction.user.create_dm()
+                await dm.send(
+                    f"Export of #{channel.name} — {len(messages)} messages ({format}) — attachments too large to include",
+                    file=file
+                )
+                await interaction.followup.send("Export sent to your DMs (attachments excluded — too large).", ephemeral=True)
+            except discord.Forbidden:
+                await interaction.followup.send("Could not DM you the export — enable DMs from server members.", ephemeral=True)
+        else:
+            zip_file = discord.File(io.BytesIO(zip_bytes), filename=zip_path.name)
+            try:
+                dm = await interaction.user.create_dm()
+                await dm.send(
+                    f"Export of #{channel.name} — {len(messages)} messages ({format}), {att_count} attachments",
+                    file=zip_file
+                )
+                await interaction.followup.send("Export sent to your DMs.", ephemeral=True)
+                log.info("Exported %d messages, %d attachments from %s as %s for %s",
+                         len(messages), att_count, channel.name, format, interaction.user)
+            except discord.Forbidden:
+                await interaction.followup.send("Could not DM you the export — enable DMs from server members.", ephemeral=True)
 
     except Exception:
         log.exception("Export command failed")
@@ -858,8 +942,23 @@ td {{ padding: 4px 8px; vertical-align: top; border-bottom: 1px solid #313244; }
 </body></html>"""
                 filepath.write_text(html, encoding="utf-8")
 
-            exported.append(f"{channel.name} ({len(messages)} messages)")
-            log.info("Exported %s — %d messages as %s", channel.name, len(messages), format)
+            # Download attachments
+            att_dir = export_root / f"{channel.name}-attachments"
+            att_count = await download_attachments(messages, att_dir)
+            if att_count == 0 and att_dir.exists():
+                att_dir.rmdir()  # Remove empty attachments folder
+
+            # Extract URLs to a separate file
+            urls_content = extract_urls(messages)
+            if urls_content:
+                urls_path = export_root / f"{channel.name}-urls.txt"
+                urls_path.write_text(urls_content, encoding="utf-8")
+                url_count = urls_content.count("\n") + 1
+            else:
+                url_count = 0
+
+            exported.append(f"{channel.name} ({len(messages)} messages, {att_count} attachments, {url_count} urls)")
+            log.info("Exported %s — %d messages, %d attachments, %d urls as %s", channel.name, len(messages), att_count, url_count, format)
 
         except Exception as e:
             skipped.append(channel.name)
