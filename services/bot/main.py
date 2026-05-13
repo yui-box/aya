@@ -59,7 +59,7 @@ if _raw_patterns:
 else:
     SELF_PROMO_PATTERNS = None
 
-SYSTEM_PROMPT = """You are the GTT Bot, the AI assistant for Goju Tech Talk (GTT) — a community built around honest tech analysis, deep critical thinking, and the truth about AI, software engineering, and the future of programming. GTT brings together software engineers, scientists, technology enthusiasts, and curious minds who value intellectual honesty over hype.
+SYSTEM_PROMPT = """You are the GTT Bot, the AI assistant for Goju Tech Talk (GTT). You run on claude-sonnet-4-5 (Claude Sonnet 4.5) via the Anthropic API. When asked what model you are, say claude-sonnet-4-5. Do not say Claude 3.5 Sonnet — that is a different model. — a community built around honest tech analysis, deep critical thinking, and the truth about AI, software engineering, and the future of programming. GTT brings together software engineers, scientists, technology enthusiasts, and curious minds who value intellectual honesty over hype.
 
 You were built by the GTT community using a knowledge graph of atomic notes representing Goju's actual positions.
 
@@ -110,15 +110,28 @@ You reason from these core positions:
 
 
 def build_retriever():
+    Settings.llm = None  # Prevent accidental OpenAI calls
     Settings.embed_model = OllamaEmbedding(model_name=EMBED_MODEL, base_url=OLLAMA_HOST)
     client = QdrantClient(url=QDRANT_HOST)
     vector_store = QdrantVectorStore(client=client, collection_name=COLLECTION)
     index = VectorStoreIndex.from_vector_store(vector_store)
-    return index.as_retriever(similarity_top_k=TOP_K)
+    # Fetch more than TOP_K so deduplication still yields TOP_K unique files
+    retriever = index.as_retriever(similarity_top_k=TOP_K * 4)
+    log.info("Vector retriever ready (k=%d, dedup to %d unique files)", TOP_K * 4, TOP_K)
+    return retriever
 
 
 def retrieve_context(question: str) -> list:
-    return retriever.retrieve(question)
+    nodes = retriever.retrieve(question)
+    # Deduplicate by source file — keep highest scoring chunk per file
+    seen_files = {}
+    for node in nodes:
+        fname = node.metadata.get("file_name", node.node_id)
+        if fname not in seen_files:
+            seen_files[fname] = node
+        elif node.score and (seen_files[fname].score or 0) < node.score:
+            seen_files[fname] = node
+    return list(seen_files.values())
 
 
 def query_anthropic(question: str, context: str, history: list = None) -> str:
@@ -273,6 +286,47 @@ async def send_mod_alert(guild: discord.Guild, member: discord.Member,
     log.info("Automod alert sent for %s — rule: %s", member, rule)
 
 
+# --- GTT autocomplete terms ---
+
+GTT_QUERY_TERMS = [
+    "deterministic intent folding",
+    "DIF architecture",
+    "DIF vs LLM",
+    "repository lifetime reasoning",
+    "RLR vibe coding detection",
+    "vibe coding is not engineering",
+    "AI hype structural incentives",
+    "open source as strategy",
+    "critical thinking engineering discipline",
+    "data oriented design",
+    "tech industry analysis",
+    "Mentor Merly",
+    "blast radius production systems",
+    "code review as ownership verification",
+    "technical debt ownership deficit",
+    "commit history as signal",
+    "complexity distribution",
+    "test coverage intent",
+    "knowledge graph vs database",
+    "engineering mentorship",
+    "GTT community rules",
+    "gtt bot architecture stack",
+]
+
+async def query_autocomplete(
+    interaction: discord.Interaction,
+    current: str,
+) -> list[app_commands.Choice[str]]:
+    """Return autocomplete suggestions for knowledge base queries."""
+    current_lower = current.lower()
+    matches = [
+        app_commands.Choice(name=term, value=term)
+        for term in GTT_QUERY_TERMS
+        if current_lower in term.lower()
+    ]
+    return matches[:25]  # Discord limit
+
+
 # --- Discord setup ---
 
 intents = discord.Intents.default()
@@ -395,6 +449,7 @@ async def check_automod(message: discord.Message):
 
 @tree.command(name="knowledge-base", description="Search the GTT vault directly (local, no API cost)")
 @app_commands.describe(query="Use specific terms e.g. 'deterministic intent folding' not 'what is DIF'")
+@app_commands.autocomplete(query=query_autocomplete)
 async def knowledge_base(interaction: discord.Interaction, query: str):
     if not is_allowed_guild(interaction.guild_id):
         await interaction.response.send_message("This bot isn't enabled in this server.", ephemeral=True)
@@ -455,6 +510,7 @@ async def knowledge_base(interaction: discord.Interaction, query: str):
 
 @tree.command(name="knowledge-search", description="Search the GTT vault in a private thread (visible to mods)")
 @app_commands.describe(query="Use specific terms e.g. 'deterministic intent folding' not 'what is DIF'")
+@app_commands.autocomplete(query=query_autocomplete)
 async def knowledge_search(interaction: discord.Interaction, query: str):
     if not is_allowed_guild(interaction.guild_id):
         await interaction.response.send_message("This bot isn't enabled in this server.", ephemeral=True)
