@@ -1037,12 +1037,27 @@ async def export_all(interaction: discord.Interaction, format: str, limit: int =
     summary = (
         f"**Export complete** — saved to `{export_root}`\n\n"
         f"**Exported ({len(exported)}):**\n" +
-        "\n".join(f"• {c}" for c in exported)
+        "\n".join(f"• {c}" for c in exported[:40])
     )
+    if len(exported) > 40:
+        summary += f"\n... and {len(exported) - 40} more"
     if skipped:
         summary += f"\n\n**Skipped ({len(skipped)}):** {', '.join(skipped)}"
 
-    await interaction.followup.send(summary[:2000], ephemeral=True)
+    # DM the summary — avoids interaction token expiry on long exports
+    try:
+        dm = await interaction.user.create_dm()
+        for chunk in split_at_sentence(summary):
+            await dm.send(chunk)
+        try:
+            await interaction.followup.send("Export complete — summary sent to your DMs.", ephemeral=True)
+        except Exception:
+            pass  # Token may have expired — DM was already sent
+    except discord.Forbidden:
+        try:
+            await interaction.followup.send(summary[:2000], ephemeral=True)
+        except Exception:
+            log.warning("Could not send export-all summary — token expired and DMs disabled")
 
 
 # --- @mention: full Anthropic pipeline ---
@@ -1306,14 +1321,27 @@ table{{border-collapse:collapse;width:100%}}td{{padding:4px 8px;vertical-align:t
     summary = (
         f"**{mode} export complete** — saved to `{latest_dir}`\n\n"
         f"**Updated ({len(exported)}):**\n" +
-        "\n".join(f"• {c}" for c in exported[:30])
+        "\n".join(f"• {c}" for c in exported[:40])
     )
-    if len(exported) > 30:
-        summary += f"\n... and {len(exported) - 30} more"
+    if len(exported) > 40:
+        summary += f"\n... and {len(exported) - 40} more"
     if skipped:
         summary += f"\n\n**Skipped ({len(skipped)}):** {', '.join(skipped[:20])}"
 
-    await interaction.followup.send(summary[:2000], ephemeral=True)
+    # DM the summary — avoids interaction token expiry on long exports
+    try:
+        dm = await interaction.user.create_dm()
+        for chunk in split_at_sentence(summary):
+            await dm.send(chunk)
+        try:
+            await interaction.followup.send(f"{mode} export complete — summary sent to your DMs.", ephemeral=True)
+        except Exception:
+            pass
+    except discord.Forbidden:
+        try:
+            await interaction.followup.send(summary[:2000], ephemeral=True)
+        except Exception:
+            log.warning("Could not send export-state summary — token expired and DMs disabled")
 
 def main():
     global retriever
