@@ -629,7 +629,7 @@ async def get_thread_history(channel, limit: int = THREAD_HISTORY_LIMIT) -> list
 @app_commands.describe(
     channel="Channel to export",
     format="Output format: text, json, or html",
-    limit="Number of messages to export (default 500, max 5000)"
+    limit="Number of messages to export (default 500, 0 = unlimited)"
 )
 @app_commands.choices(format=[
     app_commands.Choice(name="text", value="text"),
@@ -648,8 +648,8 @@ async def export(interaction: discord.Interaction, channel: discord.TextChannel,
         await interaction.response.send_message("This command is restricted to GTT Team.", ephemeral=True)
         return
 
-    # Cap at 5000
-    limit = min(max(1, limit), 5000)
+    # 0 = unlimited
+    fetch_limit = None if limit == 0 else max(1, limit)
 
     await interaction.response.defer(ephemeral=True)
     await interaction.followup.send(
@@ -659,7 +659,7 @@ async def export(interaction: discord.Interaction, channel: discord.TextChannel,
 
     try:
         messages = []
-        async for msg in channel.history(limit=limit, oldest_first=True):
+        async for msg in channel.history(limit=fetch_limit, oldest_first=True):
             messages.append(msg)
 
         if not messages:
@@ -747,6 +747,133 @@ td {{ padding: 4px 8px; vertical-align: top; border-bottom: 1px solid #313244; }
     except Exception:
         log.exception("Export command failed")
         await interaction.followup.send("Something went wrong during export.", ephemeral=True)
+
+
+
+# --- Slash command: /export-all ---
+
+@tree.command(name="export-all", description="Export all server channels to local disk (GTT Team only)")
+@app_commands.describe(
+    format="Output format: text, json, or html",
+    limit="Messages per channel (default 500, 0 = unlimited)"
+)
+@app_commands.choices(format=[
+    app_commands.Choice(name="text", value="text"),
+    app_commands.Choice(name="json", value="json"),
+    app_commands.Choice(name="html", value="html"),
+])
+async def export_all(interaction: discord.Interaction, format: str, limit: int = 500):
+    import json as json_lib
+    from pathlib import Path
+
+    if not isinstance(interaction.user, discord.Member):
+        await interaction.response.send_message("This command only works in a server.", ephemeral=True)
+        return
+
+    is_gtt_team = any(r.name in ("GTT Team", "admin") for r in interaction.user.roles)
+    if not is_gtt_team:
+        await interaction.response.send_message("This command is restricted to GTT Team.", ephemeral=True)
+        return
+
+    fetch_limit = None if limit == 0 else max(1, limit)
+    await interaction.response.defer(ephemeral=True)
+
+    timestamp = discord.utils.utcnow().strftime("%Y-%m-%d-%H-%M")
+    export_root = Path("/exports") / timestamp
+    export_root.mkdir(parents=True, exist_ok=True)
+
+    guild = interaction.guild
+    exported = []
+    skipped = []
+
+    await interaction.followup.send(
+        f"Starting export of all channels to `{export_root}`...", ephemeral=True
+    )
+
+    for channel in guild.text_channels:
+        perms = channel.permissions_for(guild.me)
+        if not perms.read_messages or not perms.read_message_history:
+            skipped.append(channel.name)
+            continue
+
+        try:
+            messages = []
+            async for msg in channel.history(limit=fetch_limit, oldest_first=True):
+                messages.append(msg)
+
+            if not messages:
+                skipped.append(channel.name)
+                continue
+
+            ext = "txt" if format == "text" else format
+            filepath = export_root / f"{channel.name}.{ext}"
+
+            if format == "text":
+                lines = []
+                for msg in messages:
+                    ts = msg.created_at.strftime("%Y-%m-%d %H:%M")
+                    lines.append(f"[{ts}] {msg.author.display_name}: {msg.content}")
+                filepath.write_text("\n".join(lines), encoding="utf-8")
+
+            elif format == "json":
+                records = []
+                for msg in messages:
+                    records.append({
+                        "id": str(msg.id),
+                        "timestamp": msg.created_at.isoformat(),
+                        "author": msg.author.display_name,
+                        "author_id": str(msg.author.id),
+                        "content": msg.content,
+                        "attachments": [a.url for a in msg.attachments],
+                    })
+                filepath.write_text(
+                    json_lib.dumps(records, indent=2, ensure_ascii=False),
+                    encoding="utf-8"
+                )
+
+            elif format == "html":
+                rows = []
+                for msg in messages:
+                    ts = msg.created_at.strftime("%Y-%m-%d %H:%M")
+                    author = discord.utils.escape_markdown(msg.author.display_name)
+                    body = discord.utils.escape_markdown(msg.content).replace("\n", "<br>")
+                    rows.append(
+                        f'<tr><td class="ts">{ts}</td>'
+                        f'<td class="author">{author}</td>'
+                        f'<td class="content">{body}</td></tr>'
+                    )
+                html = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<title>{channel.name} export</title>
+<style>
+body {{ font-family: sans-serif; background: #1e1e2e; color: #cdd6f4; padding: 20px; }}
+table {{ border-collapse: collapse; width: 100%; }}
+td {{ padding: 4px 8px; vertical-align: top; border-bottom: 1px solid #313244; }}
+.ts {{ color: #6c7086; white-space: nowrap; width: 140px; }}
+.author {{ color: #89b4fa; white-space: nowrap; width: 160px; font-weight: bold; }}
+.content {{ word-break: break-word; }}
+</style></head><body>
+<h2>#{channel.name} — {len(messages)} messages</h2>
+<table>{"".join(rows)}</table>
+</body></html>"""
+                filepath.write_text(html, encoding="utf-8")
+
+            exported.append(f"{channel.name} ({len(messages)} messages)")
+            log.info("Exported %s — %d messages as %s", channel.name, len(messages), format)
+
+        except Exception as e:
+            skipped.append(channel.name)
+            log.exception("Failed to export channel %s", channel.name)
+
+    summary = (
+        f"**Export complete** — saved to `{export_root}`\n\n"
+        f"**Exported ({len(exported)}):**\n" +
+        "\n".join(f"• {c}" for c in exported)
+    )
+    if skipped:
+        summary += f"\n\n**Skipped ({len(skipped)}):** {', '.join(skipped)}"
+
+    await interaction.followup.send(summary[:2000], ephemeral=True)
 
 
 # --- @mention: full Anthropic pipeline ---
