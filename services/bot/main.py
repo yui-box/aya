@@ -628,6 +628,40 @@ async def get_thread_history(channel, limit: int = THREAD_HISTORY_LIMIT) -> list
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".svg"}
 
+def get_forwarded_content(msg) -> str:
+    """Extract content from forwarded messages using discord.py v2.5+ MessageSnapshot."""
+    try:
+        # discord.py v2.5+ exposes message_snapshots as List[MessageSnapshot]
+        # Each MessageSnapshot has .content, .embeds, .attachments etc.
+        snapshots = getattr(msg, "message_snapshots", None)
+        if snapshots:
+            parts = []
+            for snap in snapshots:
+                # MessageSnapshot has .content directly (not .message.content)
+                text = getattr(snap, "content", "") or ""
+                if text:
+                    parts.append(text)
+            if parts:
+                return " | ".join(parts)
+
+        # Fallback: try accessing raw Discord payload data directly
+        # The _raw_data dict contains message_snapshots from the API response
+        for attr in ("_raw_data", "__dict__"):
+            raw = getattr(msg, attr, None)
+            if isinstance(raw, dict):
+                snaps = raw.get("message_snapshots", [])
+                for snap in snaps:
+                    inner = snap.get("message", {})
+                    text = inner.get("content", "")
+                    if text:
+                        return f"[Forwarded]: {text}"
+
+        return ""
+    except Exception as e:
+        log.debug("get_forwarded_content failed: %s", e)
+        return ""
+
+
 def render_attachments_html(msg, channel_name: str) -> str:
     """Render attachments as inline images or clickable links with relative paths."""
     IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".svg"}
@@ -804,7 +838,11 @@ async def export_channel_data(channel: discord.TextChannel, export_dir, fmt: str
         lines = []
         for msg in thread_msgs:
             ts = msg.created_at.strftime("%Y-%m-%d %H:%M")
-            lines.append(f"[{ts}] {msg.author.display_name}: {msg.content}")
+            att_str = " ".join(f"[{a.filename}]" for a in msg.attachments) if msg.attachments else ""
+            fwd = get_forwarded_content(msg)
+            fwd_str = f" [Forwarded: {fwd}]" if fwd else ""
+            text = (msg.content or "") + ((" " + att_str) if att_str else "") + fwd_str
+            lines.append(f"[{ts}] {msg.author.display_name}: {text}")
         thread_file.write_text("\n".join(lines), encoding="utf-8")
         thread_count += 1
 
@@ -833,7 +871,15 @@ async def export_channel_data(channel: discord.TextChannel, export_dir, fmt: str
             ts = msg.created_at.strftime("%Y-%m-%d %H:%M")
             rxn = reactions_map.get(str(msg.id), {})
             rxn_str = " " + " ".join(f"{e}({len(u)})" for e, u in rxn.items()) if rxn else ""
-            lines.append(f"[{ts}] {msg.author.display_name}: {msg.content}{rxn_str}")
+            att_str = " ".join(f"[{a.filename}]" for a in msg.attachments) if msg.attachments else ""
+            fwd = get_forwarded_content(msg)
+            fwd_str = f" [Forwarded: {fwd}]" if fwd else ""
+            text = (msg.content or "") + ((" " + att_str) if att_str else "") + fwd_str
+            if not text.strip():
+                # System message or empty — note the message type
+                msg_type = getattr(msg.type, "name", str(msg.type)) if msg.type else "unknown"
+                text = f"[system: {msg_type}]"
+            lines.append(f"[{ts}] {msg.author.display_name}: {text}{rxn_str}")
         filepath.write_text("\n".join(lines), encoding="utf-8")
 
     elif fmt == "json":
@@ -845,7 +891,9 @@ async def export_channel_data(channel: discord.TextChannel, export_dir, fmt: str
         for msg in messages:
             ts = msg.created_at.strftime("%Y-%m-%d %H:%M")
             author = discord.utils.escape_markdown(msg.author.display_name)
-            body = linkify(discord.utils.escape_markdown(msg.content)) if msg.content else ""
+            fwd = get_forwarded_content(msg)
+            fwd_html = f'<div class="fwd">↩ {linkify(discord.utils.escape_markdown(fwd))}</div>' if fwd else ""
+            body = (linkify(discord.utils.escape_markdown(msg.content)) if msg.content else "") + fwd_html
             rxn = reactions_map.get(str(msg.id), {})
             rxn_str = " ".join(f'<span class="rxn">{e} {len(u)}</span>' for e, u in rxn.items())
             att_html = render_attachments_html(msg, channel.name)
@@ -859,7 +907,7 @@ async def export_channel_data(channel: discord.TextChannel, export_dir, fmt: str
 table{{border-collapse:collapse;width:100%}}td{{padding:4px 8px;vertical-align:top;border-bottom:1px solid #313244}}
 .ts{{color:#6c7086;white-space:nowrap;width:140px}}.author{{color:#89b4fa;width:160px;font-weight:bold}}
 .content{{word-break:break-word}}.rxn{{background:#313244;border-radius:4px;padding:2px 6px;margin:2px;font-size:0.85em}}
-a{{color:#89dceb}}img{{border:1px solid #313244}}
+a{{color:#89dceb}}img{{border:1px solid #313244}}.fwd{{color:#a6adc8;border-left:3px solid #45475a;padding-left:8px;margin-top:4px;font-size:0.9em}}
 </style></head><body>
 <h2>#{channel.name} — {len(messages)} messages</h2>
 <table>{"".join(rows)}</table></body></html>"""
@@ -1292,7 +1340,11 @@ async def export_state(interaction: discord.Interaction, format: str = "all", re
                         ts = msg.created_at.strftime("%Y-%m-%d %H:%M")
                         rxn = reactions_map.get(str(msg.id), {})
                         rxn_str = " " + " ".join(f"{e}({len(u)})" for e, u in rxn.items()) if rxn else ""
-                        lines_out.append(f"[{ts}] {msg.author.display_name}: {msg.content}{rxn_str}")
+                        fwd = get_forwarded_content(msg)
+                        fwd_str = f" [Forwarded: {fwd}]" if fwd else ""
+                        att_str = " ".join(f"[{a.filename}]" for a in msg.attachments) if msg.attachments else ""
+                        text = (msg.content or "") + ((" " + att_str) if att_str else "") + fwd_str
+                        lines_out.append(f"[{ts}] {msg.author.display_name}: {text}{rxn_str}")
                     new_content = "\n".join(lines_out)
                     if fpath.exists() and not is_bootstrap:
                         existing = fpath.read_text(encoding="utf-8")
@@ -1314,7 +1366,9 @@ async def export_state(interaction: discord.Interaction, format: str = "all", re
                     for msg in messages:
                         ts = msg.created_at.strftime("%Y-%m-%d %H:%M")
                         author = discord.utils.escape_markdown(msg.author.display_name)
-                        body = linkify(discord.utils.escape_markdown(msg.content)) if msg.content else ""
+                        fwd = get_forwarded_content(msg)
+                        fwd_html = f'<div class="fwd">↩ {linkify(discord.utils.escape_markdown(fwd))}</div>' if fwd else ""
+                        body = (linkify(discord.utils.escape_markdown(msg.content)) if msg.content else "") + fwd_html
                         rxn = reactions_map.get(str(msg.id), {})
                         rxn_str = " ".join(f'<span class="rxn">{e} {len(u)}</span>' for e, u in rxn.items())
                         att_html = render_attachments_html(msg, channel.name)
@@ -1333,7 +1387,7 @@ async def export_state(interaction: discord.Interaction, format: str = "all", re
 table{{border-collapse:collapse;width:100%}}td{{padding:4px 8px;vertical-align:top;border-bottom:1px solid #313244}}
 .ts{{color:#6c7086;white-space:nowrap;width:140px}}.author{{color:#89b4fa;width:160px;font-weight:bold}}
 .content{{word-break:break-word}}.rxn{{background:#313244;border-radius:4px;padding:2px 6px;margin:2px;font-size:0.85em}}
-a{{color:#89dceb}}img{{border:1px solid #313244}}
+a{{color:#89dceb}}img{{border:1px solid #313244}}.fwd{{color:#a6adc8;border-left:3px solid #45475a;padding-left:8px;margin-top:4px;font-size:0.9em}}
 </style></head><body>
 <h2>#{channel.name}</h2><table>{new_rows}</table></body></html>"""
                         fpath.write_text(html_out, encoding="utf-8")
