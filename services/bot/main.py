@@ -624,10 +624,25 @@ async def get_thread_history(channel, limit: int = THREAD_HISTORY_LIMIT) -> list
     return history
 
 
-# --- Attachment downloader helper ---
+# --- Export helpers ---
+
+URL_RE = re.compile(r"https?://\S+")
+
+
+async def download_file(session: aiohttp.ClientSession, url: str, filepath) -> bool:
+    """Download a single file. Returns True on success."""
+    try:
+        async with session.get(url) as resp:
+            if resp.status == 200:
+                filepath.write_bytes(await resp.read())
+                return True
+    except Exception:
+        log.warning("Failed to download %s", url)
+    return False
+
 
 async def download_attachments(messages: list, attachments_dir) -> int:
-    """Download all attachments from messages to a local folder. Returns count downloaded."""
+    """Download all attachments from messages. Returns count downloaded."""
     from pathlib import Path
     attachments_dir = Path(attachments_dir)
     attachments_dir.mkdir(parents=True, exist_ok=True)
@@ -635,22 +650,42 @@ async def download_attachments(messages: list, attachments_dir) -> int:
     async with aiohttp.ClientSession() as session:
         for msg in messages:
             for attachment in msg.attachments:
-                try:
-                    safe_name = f"{msg.id}_{attachment.filename}"
-                    filepath = attachments_dir / safe_name
-                    async with session.get(attachment.url) as resp:
-                        if resp.status == 200:
-                            data = await resp.read()
-                            filepath.write_bytes(data)
-                            count += 1
-                except Exception:
-                    log.warning("Failed to download attachment %s", attachment.url)
+                filepath = attachments_dir / f"{msg.id}_{attachment.filename}"
+                if await download_file(session, attachment.url, filepath):
+                    count += 1
+            # Download stickers
+            for sticker in msg.stickers:
+                url = f"https://media.discordapp.net/stickers/{sticker.id}.png"
+                filepath = attachments_dir / f"sticker_{sticker.id}_{sticker.name}.png"
+                await download_file(session, url, filepath)
     return count
 
 
-# --- URL extractor helper ---
+async def fetch_reactions(message: discord.Message) -> dict:
+    """Fetch all reactions and who reacted for a message."""
+    result = {}
+    for reaction in message.reactions:
+        emoji_str = str(reaction.emoji)
+        users = []
+        try:
+            async for user in reaction.users():
+                users.append(user.display_name)
+        except Exception:
+            pass
+        result[emoji_str] = users
+    return result
 
-URL_RE = re.compile(r"https?://\S+")
+
+async def fetch_thread_messages(thread: discord.Thread, limit) -> list:
+    """Fetch all messages from a thread."""
+    messages = []
+    try:
+        async for msg in thread.history(limit=limit, oldest_first=True):
+            messages.append(msg)
+    except Exception:
+        log.warning("Failed to fetch thread %s", thread.name)
+    return messages
+
 
 def extract_urls(messages: list) -> str:
     """Extract all URLs from messages into a deduplicated list."""
@@ -666,21 +701,170 @@ def extract_urls(messages: list) -> str:
     return "\n".join(lines)
 
 
+def message_to_dict(msg: discord.Message, reactions: dict = None) -> dict:
+    """Convert a discord.Message to a serializable dict with full metadata."""
+    return {
+        "id": str(msg.id),
+        "timestamp": msg.created_at.isoformat(),
+        "author": msg.author.display_name,
+        "author_id": str(msg.author.id),
+        "author_roles": [r.name for r in msg.author.roles] if isinstance(msg.author, discord.Member) else [],
+        "content": msg.content,
+        "reply_to_id": str(msg.reference.message_id) if msg.reference else None,
+        "attachments": [{"filename": a.filename, "url": a.url} for a in msg.attachments],
+        "stickers": [{"id": str(s.id), "name": s.name} for s in msg.stickers],
+        "reactions": reactions or {},
+        "pinned": msg.pinned,
+    }
+
+
+async def export_channel_data(channel: discord.TextChannel, export_dir, fmt: str, fetch_limit, fetch_reactions_flag: bool = True) -> dict:
+    """Export a single channel — messages, threads, pins, attachments, URLs. Returns stats."""
+    import json as json_lib
+    from pathlib import Path
+    export_dir = Path(export_dir)
+    export_dir.mkdir(parents=True, exist_ok=True)
+
+    # Fetch messages
+    messages = []
+    async for msg in channel.history(limit=fetch_limit, oldest_first=True):
+        messages.append(msg)
+
+    if not messages:
+        return {"messages": 0, "attachments": 0, "urls": 0, "threads": 0, "pinned": 0}
+
+    # Fetch reactions (optional — slow on large channels)
+    reactions_map = {}
+    if fetch_reactions_flag:
+        for msg in messages:
+            if msg.reactions:
+                reactions_map[str(msg.id)] = await fetch_reactions(msg)
+
+    # Fetch threads (active + archived)
+    thread_count = 0
+    threads_dir = export_dir / f"{channel.name}-threads"
+    all_threads = list(channel.threads)
+    try:
+        async for thread in channel.archived_threads(limit=None):
+            all_threads.append(thread)
+    except Exception:
+        pass
+
+    for thread in all_threads:
+        thread_msgs = await fetch_thread_messages(thread, fetch_limit)
+        if not thread_msgs:
+            continue
+        threads_dir.mkdir(parents=True, exist_ok=True)
+        safe_name = thread.name.replace("/", "-").replace("\\", "-")[:80]
+        thread_file = threads_dir / f"{safe_name}.txt"
+        lines = []
+        for msg in thread_msgs:
+            ts = msg.created_at.strftime("%Y-%m-%d %H:%M")
+            lines.append(f"[{ts}] {msg.author.display_name}: {msg.content}")
+        thread_file.write_text("\n".join(lines), encoding="utf-8")
+        thread_count += 1
+
+    # Pinned messages
+    pinned_count = 0
+    try:
+        pinned = await channel.pins()
+        if pinned:
+            pin_lines = []
+            for msg in pinned:
+                ts = msg.created_at.strftime("%Y-%m-%d %H:%M")
+                pin_lines.append(f"[{ts}] {msg.author.display_name}: {msg.content}")
+            pin_file = export_dir / f"{channel.name}-pinned.txt"
+            pin_file.write_text("\n".join(pin_lines), encoding="utf-8")
+            pinned_count = len(pinned)
+    except Exception:
+        pass
+
+    # Write main export file
+    ext = "txt" if fmt == "text" else fmt
+    filepath = export_dir / f"{channel.name}.{ext}"
+
+    if fmt == "text":
+        lines = []
+        for msg in messages:
+            ts = msg.created_at.strftime("%Y-%m-%d %H:%M")
+            rxn = reactions_map.get(str(msg.id), {})
+            rxn_str = " " + " ".join(f"{e}({len(u)})" for e, u in rxn.items()) if rxn else ""
+            lines.append(f"[{ts}] {msg.author.display_name}: {msg.content}{rxn_str}")
+        filepath.write_text("\n".join(lines), encoding="utf-8")
+
+    elif fmt == "json":
+        records = [message_to_dict(msg, reactions_map.get(str(msg.id))) for msg in messages]
+        filepath.write_text(json_lib.dumps(records, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    elif fmt == "html":
+        rows = []
+        for msg in messages:
+            ts = msg.created_at.strftime("%Y-%m-%d %H:%M")
+            author = discord.utils.escape_markdown(msg.author.display_name)
+            body = discord.utils.escape_markdown(msg.content).replace("\n", "<br>")
+            rxn = reactions_map.get(str(msg.id), {})
+            rxn_str = " ".join(f'<span class="rxn">{e} {len(u)}</span>' for e, u in rxn.items())
+            rows.append(
+                f'<tr><td class="ts">{ts}</td><td class="author">{author}</td>'
+                f'<td class="content">{body} {rxn_str}</td></tr>'
+            )
+        html = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>{channel.name}</title>
+<style>body{{font-family:sans-serif;background:#1e1e2e;color:#cdd6f4;padding:20px}}
+table{{border-collapse:collapse;width:100%}}td{{padding:4px 8px;vertical-align:top;border-bottom:1px solid #313244}}
+.ts{{color:#6c7086;white-space:nowrap;width:140px}}.author{{color:#89b4fa;width:160px;font-weight:bold}}
+.content{{word-break:break-word}}.rxn{{background:#313244;border-radius:4px;padding:2px 6px;margin:2px;font-size:0.85em}}
+</style></head><body>
+<h2>#{channel.name} — {len(messages)} messages</h2>
+<table>{"".join(rows)}</table></body></html>"""
+        filepath.write_text(html, encoding="utf-8")
+
+    # Download attachments
+    att_dir = export_dir / f"{channel.name}-attachments"
+    att_count = await download_attachments(messages, att_dir)
+    if att_count == 0 and att_dir.exists():
+        try:
+            att_dir.rmdir()
+        except Exception:
+            pass
+
+    # Extract URLs
+    urls_content = extract_urls(messages)
+    url_count = 0
+    if urls_content:
+        urls_file = export_dir / f"{channel.name}-urls.txt"
+        urls_file.write_text(urls_content, encoding="utf-8")
+        url_count = len(urls_content.splitlines())
+
+    return {
+        "messages": len(messages),
+        "attachments": att_count,
+        "urls": url_count,
+        "threads": thread_count,
+        "pinned": pinned_count,
+    }
+
+
 # --- Slash command: /export ---
 
 @tree.command(name="export", description="Export channel history to a file (GTT Team only)")
 @app_commands.describe(
     channel="Channel to export",
     format="Output format: text, json, or html",
-    limit="Number of messages to export (default 500, 0 = unlimited)"
+    limit="Number of messages to export (default 500, 0 = unlimited)",
+    reactions="Include reactions (slower, default: yes)"
 )
 @app_commands.choices(format=[
     app_commands.Choice(name="text", value="text"),
     app_commands.Choice(name="json", value="json"),
     app_commands.Choice(name="html", value="html"),
 ])
+@app_commands.choices(reactions=[
+    app_commands.Choice(name="yes", value="yes"),
+    app_commands.Choice(name="no", value="no"),
+])
 async def export(interaction: discord.Interaction, channel: discord.TextChannel,
-                 format: str, limit: int = 500):
+                 format: str, limit: int = 500, reactions: str = "yes"):
     # Restrict to GTT Team role
     if not isinstance(interaction.user, discord.Member):
         await interaction.response.send_message("This command only works in a server.", ephemeral=True)
@@ -701,132 +885,53 @@ async def export(interaction: discord.Interaction, channel: discord.TextChannel,
     )
 
     try:
-        messages = []
-        async for msg in channel.history(limit=fetch_limit, oldest_first=True):
-            messages.append(msg)
-
-        if not messages:
-            await interaction.followup.send("No messages found in that channel.", ephemeral=True)
-            return
-
-        timestamp = discord.utils.utcnow().strftime("%Y%m%d-%H%M%S")
-        filename = f"{channel.name}-{timestamp}.{format if format != 'html' else 'html'}"
-
-        if format == "text":
-            lines = []
-            for msg in messages:
-                ts = msg.created_at.strftime("%Y-%m-%d %H:%M")
-                lines.append(f"[{ts}] {msg.author.display_name}: {msg.content}")
-            output = "\n".join(lines)
-            file_bytes = output.encode("utf-8")
-
-        elif format == "json":
-            import json
-            records = []
-            for msg in messages:
-                records.append({
-                    "id": str(msg.id),
-                    "timestamp": msg.created_at.isoformat(),
-                    "author": msg.author.display_name,
-                    "author_id": str(msg.author.id),
-                    "content": msg.content,
-                    "attachments": [a.url for a in msg.attachments],
-                })
-            output = json.dumps(records, indent=2, ensure_ascii=False)
-            file_bytes = output.encode("utf-8")
-
-        elif format == "html":
-            rows = []
-            for msg in messages:
-                ts = msg.created_at.strftime("%Y-%m-%d %H:%M")
-                author = discord.utils.escape_markdown(msg.author.display_name)
-                content = discord.utils.escape_markdown(msg.content).replace("\n", "<br>")
-                rows.append(
-                    f'<tr><td class="ts">{ts}</td>'
-                    f'<td class="author">{author}</td>'
-                    f'<td class="content">{content}</td></tr>'
-                )
-            html = f"""<!DOCTYPE html>
-<html><head><meta charset="utf-8">
-<title>{channel.name} export</title>
-<style>
-body {{ font-family: sans-serif; background: #1e1e2e; color: #cdd6f4; padding: 20px; }}
-table {{ border-collapse: collapse; width: 100%; }}
-td {{ padding: 4px 8px; vertical-align: top; border-bottom: 1px solid #313244; }}
-.ts {{ color: #6c7086; white-space: nowrap; width: 140px; }}
-.author {{ color: #89b4fa; white-space: nowrap; width: 160px; font-weight: bold; }}
-.content {{ word-break: break-word; }}
-</style></head><body>
-<h2>#{channel.name} — {len(messages)} messages</h2>
-<table>{"".join(rows)}</table>
-</body></html>"""
-            file_bytes = html.encode("utf-8")
-
-        # Check file size — Discord limit is 25MB
-        if len(file_bytes) > 25 * 1024 * 1024:
-            await interaction.followup.send(
-                "Export too large for Discord (25MB limit). Try a smaller limit.", ephemeral=True
-            )
-            return
-
-        import io
-        file = discord.File(io.BytesIO(file_bytes), filename=filename)
-
-        # Download attachments to temp folder then zip with export
-        from pathlib import Path
         import tempfile, zipfile
+        from pathlib import Path
+
         with tempfile.TemporaryDirectory() as tmpdir:
             tmpdir = Path(tmpdir)
-            export_file = tmpdir / filename
-            export_file.write_bytes(file_bytes)
-            att_dir = tmpdir / f"{channel.name}-attachments"
-            att_count = await download_attachments(messages, att_dir)
+            channel_dir = tmpdir / channel.name
+            stats = await export_channel_data(
+                channel, channel_dir, format, fetch_limit,
+                fetch_reactions_flag=(reactions == "yes")
+            )
 
-            # Extract URLs
-            urls_content = extract_urls(messages)
-            if urls_content:
-                urls_file = tmpdir / f"{channel.name}-urls.txt"
-                urls_file.write_text(urls_content, encoding="utf-8")
-            else:
-                urls_file = None
+            if stats["messages"] == 0:
+                await interaction.followup.send("No messages found in that channel.", ephemeral=True)
+                return
 
-            # Zip everything together
-            zip_path = tmpdir / f"{channel.name}-{discord.utils.utcnow().strftime('%Y%m%d-%H%M%S')}.zip"
-            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
-                zf.write(export_file, export_file.name)
-                if att_count > 0:
-                    for att_file in att_dir.iterdir():
-                        zf.write(att_file, f"attachments/{att_file.name}")
-                if urls_file and urls_file.exists():
-                    zf.write(urls_file, urls_file.name)
+            # Zip the whole channel folder
+            timestamp = discord.utils.utcnow().strftime("%Y%m%d-%H%M%S")
+            zip_path = tmpdir / f"{channel.name}-{timestamp}.zip"
+            with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+                for f in channel_dir.rglob("*"):
+                    if f.is_file():
+                        zf.write(f, f.relative_to(tmpdir))
 
             zip_bytes = zip_path.read_bytes()
 
+        import io
         if len(zip_bytes) > 25 * 1024 * 1024:
-            # Too big for Discord — send text file only
-            file = discord.File(io.BytesIO(file_bytes), filename=filename)
-            try:
-                dm = await interaction.user.create_dm()
-                await dm.send(
-                    f"Export of #{channel.name} — {len(messages)} messages ({format}) — attachments too large to include",
-                    file=file
-                )
-                await interaction.followup.send("Export sent to your DMs (attachments excluded — too large).", ephemeral=True)
-            except discord.Forbidden:
-                await interaction.followup.send("Could not DM you the export — enable DMs from server members.", ephemeral=True)
+            await interaction.followup.send(
+                "Export too large for Discord (25MB limit). Try a smaller limit or use /export-all to save to disk.",
+                ephemeral=True
+            )
         else:
             zip_file = discord.File(io.BytesIO(zip_bytes), filename=zip_path.name)
             try:
                 dm = await interaction.user.create_dm()
                 await dm.send(
-                    f"Export of #{channel.name} — {len(messages)} messages ({format}), {att_count} attachments",
+                    f"Export of #{channel.name} — {stats['messages']} messages, "
+                    f"{stats['attachments']} attachments, {stats['urls']} urls, "
+                    f"{stats['threads']} threads, {stats['pinned']} pinned ({format})",
                     file=zip_file
                 )
                 await interaction.followup.send("Export sent to your DMs.", ephemeral=True)
-                log.info("Exported %d messages, %d attachments from %s as %s for %s",
-                         len(messages), att_count, channel.name, format, interaction.user)
+                log.info("Exported %s stats=%s for %s", channel.name, stats, interaction.user)
             except discord.Forbidden:
-                await interaction.followup.send("Could not DM you the export — enable DMs from server members.", ephemeral=True)
+                await interaction.followup.send(
+                    "Could not DM you the export — enable DMs from server members.", ephemeral=True
+                )
 
     except Exception:
         log.exception("Export command failed")
@@ -839,14 +944,19 @@ td {{ padding: 4px 8px; vertical-align: top; border-bottom: 1px solid #313244; }
 @tree.command(name="export-all", description="Export all server channels to local disk (GTT Team only)")
 @app_commands.describe(
     format="Output format: text, json, or html",
-    limit="Messages per channel (default 500, 0 = unlimited)"
+    limit="Messages per channel (default 500, 0 = unlimited)",
+    reactions="Include reactions (slower, default: yes)"
 )
 @app_commands.choices(format=[
     app_commands.Choice(name="text", value="text"),
     app_commands.Choice(name="json", value="json"),
     app_commands.Choice(name="html", value="html"),
 ])
-async def export_all(interaction: discord.Interaction, format: str, limit: int = 500):
+@app_commands.choices(reactions=[
+    app_commands.Choice(name="yes", value="yes"),
+    app_commands.Choice(name="no", value="no"),
+])
+async def export_all(interaction: discord.Interaction, format: str, limit: int = 500, reactions: str = "yes"):
     import json as json_lib
     from pathlib import Path
 
@@ -870,6 +980,35 @@ async def export_all(interaction: discord.Interaction, format: str, limit: int =
     exported = []
     skipped = []
 
+    # Export server assets first — emoji and member snapshot
+    assets_dir = export_root / "assets"
+    assets_dir.mkdir(parents=True, exist_ok=True)
+
+    # Custom emoji
+    emoji_dir = assets_dir / "emoji"
+    emoji_dir.mkdir(parents=True, exist_ok=True)
+    async with aiohttp.ClientSession() as session:
+        for emoji in guild.emojis:
+            url = str(emoji.url)
+            ext = "gif" if emoji.animated else "png"
+            filepath = emoji_dir / f"{emoji.name}.{ext}"
+            await download_file(session, url, filepath)
+
+    # Member snapshot
+    import json as json_lib
+    members_data = []
+    for member in guild.members:
+        members_data.append({
+            "id": str(member.id),
+            "username": str(member),
+            "display_name": member.display_name,
+            "joined_at": member.joined_at.isoformat() if member.joined_at else None,
+            "roles": [r.name for r in member.roles if r.name != "@everyone"],
+        })
+    (assets_dir / "members.json").write_text(
+        json_lib.dumps(members_data, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+
     await interaction.followup.send(
         f"Starting export of all channels to `{export_root}`...", ephemeral=True
     )
@@ -881,86 +1020,17 @@ async def export_all(interaction: discord.Interaction, format: str, limit: int =
             continue
 
         try:
-            messages = []
-            async for msg in channel.history(limit=fetch_limit, oldest_first=True):
-                messages.append(msg)
-
-            if not messages:
+            stats = await export_channel_data(channel, export_root, format, fetch_limit, fetch_reactions_flag=(reactions == "yes"))
+            if stats["messages"] == 0:
                 skipped.append(channel.name)
                 continue
-
-            ext = "txt" if format == "text" else format
-            filepath = export_root / f"{channel.name}.{ext}"
-
-            if format == "text":
-                lines = []
-                for msg in messages:
-                    ts = msg.created_at.strftime("%Y-%m-%d %H:%M")
-                    lines.append(f"[{ts}] {msg.author.display_name}: {msg.content}")
-                filepath.write_text("\n".join(lines), encoding="utf-8")
-
-            elif format == "json":
-                records = []
-                for msg in messages:
-                    records.append({
-                        "id": str(msg.id),
-                        "timestamp": msg.created_at.isoformat(),
-                        "author": msg.author.display_name,
-                        "author_id": str(msg.author.id),
-                        "content": msg.content,
-                        "attachments": [a.url for a in msg.attachments],
-                    })
-                filepath.write_text(
-                    json_lib.dumps(records, indent=2, ensure_ascii=False),
-                    encoding="utf-8"
-                )
-
-            elif format == "html":
-                rows = []
-                for msg in messages:
-                    ts = msg.created_at.strftime("%Y-%m-%d %H:%M")
-                    author = discord.utils.escape_markdown(msg.author.display_name)
-                    body = discord.utils.escape_markdown(msg.content).replace("\n", "<br>")
-                    rows.append(
-                        f'<tr><td class="ts">{ts}</td>'
-                        f'<td class="author">{author}</td>'
-                        f'<td class="content">{body}</td></tr>'
-                    )
-                html = f"""<!DOCTYPE html>
-<html><head><meta charset="utf-8">
-<title>{channel.name} export</title>
-<style>
-body {{ font-family: sans-serif; background: #1e1e2e; color: #cdd6f4; padding: 20px; }}
-table {{ border-collapse: collapse; width: 100%; }}
-td {{ padding: 4px 8px; vertical-align: top; border-bottom: 1px solid #313244; }}
-.ts {{ color: #6c7086; white-space: nowrap; width: 140px; }}
-.author {{ color: #89b4fa; white-space: nowrap; width: 160px; font-weight: bold; }}
-.content {{ word-break: break-word; }}
-</style></head><body>
-<h2>#{channel.name} — {len(messages)} messages</h2>
-<table>{"".join(rows)}</table>
-</body></html>"""
-                filepath.write_text(html, encoding="utf-8")
-
-            # Download attachments
-            att_dir = export_root / f"{channel.name}-attachments"
-            att_count = await download_attachments(messages, att_dir)
-            if att_count == 0 and att_dir.exists():
-                att_dir.rmdir()  # Remove empty attachments folder
-
-            # Extract URLs to a separate file
-            urls_content = extract_urls(messages)
-            if urls_content:
-                urls_path = export_root / f"{channel.name}-urls.txt"
-                urls_path.write_text(urls_content, encoding="utf-8")
-                url_count = urls_content.count("\n") + 1
-            else:
-                url_count = 0
-
-            exported.append(f"{channel.name} ({len(messages)} messages, {att_count} attachments, {url_count} urls)")
-            log.info("Exported %s — %d messages, %d attachments, %d urls as %s", channel.name, len(messages), att_count, url_count, format)
-
-        except Exception as e:
+            exported.append(
+                f"{channel.name} ({stats['messages']} msgs, "
+                f"{stats['attachments']} att, {stats['urls']} urls, "
+                f"{stats['threads']} threads, {stats['pinned']} pinned)"
+            )
+            log.info("Exported %s — %s", channel.name, stats)
+        except Exception:
             skipped.append(channel.name)
             log.exception("Failed to export channel %s", channel.name)
 
