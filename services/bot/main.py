@@ -652,6 +652,27 @@ def render_attachments_html(msg, channel_name: str) -> str:
 URL_RE = re.compile(r"https?://\S+")
 
 
+CHANNEL_MENTION_RE = re.compile(r"<#\d+>")
+CLEAN_URL_RE = re.compile(r"https?://[^\s]+")
+
+def linkify(text: str) -> str:
+    """Convert plain URLs to clickable links, handle line breaks and channel mentions cleanly."""
+    if not text:
+        return text
+    # Remove Discord channel mention artifacts
+    text = CHANNEL_MENTION_RE.sub("", text)
+    # Process line by line so URLs don't bleed across newlines
+    lines = text.split("\n")
+    result = []
+    for line in lines:
+        line = CLEAN_URL_RE.sub(
+            lambda m: f'<a href="{m.group()}" target="_blank">{m.group()}</a>',
+            line
+        )
+        result.append(line)
+    return "<br>".join(result)
+
+
 async def download_file(session: aiohttp.ClientSession, url: str, filepath) -> bool:
     """Download a single file. Returns True on success."""
     try:
@@ -824,7 +845,7 @@ async def export_channel_data(channel: discord.TextChannel, export_dir, fmt: str
         for msg in messages:
             ts = msg.created_at.strftime("%Y-%m-%d %H:%M")
             author = discord.utils.escape_markdown(msg.author.display_name)
-            body = discord.utils.escape_markdown(msg.content).replace("\n", "<br>") if msg.content else ""
+            body = linkify(discord.utils.escape_markdown(msg.content)) if msg.content else ""
             rxn = reactions_map.get(str(msg.id), {})
             rxn_str = " ".join(f'<span class="rxn">{e} {len(u)}</span>' for e, u in rxn.items())
             att_html = render_attachments_html(msg, channel.name)
@@ -1293,7 +1314,7 @@ async def export_state(interaction: discord.Interaction, format: str = "all", re
                     for msg in messages:
                         ts = msg.created_at.strftime("%Y-%m-%d %H:%M")
                         author = discord.utils.escape_markdown(msg.author.display_name)
-                        body = discord.utils.escape_markdown(msg.content).replace("\n", "<br>") if msg.content else ""
+                        body = linkify(discord.utils.escape_markdown(msg.content)) if msg.content else ""
                         rxn = reactions_map.get(str(msg.id), {})
                         rxn_str = " ".join(f'<span class="rxn">{e} {len(u)}</span>' for e, u in rxn.items())
                         att_html = render_attachments_html(msg, channel.name)
