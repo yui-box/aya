@@ -626,6 +626,29 @@ async def get_thread_history(channel, limit: int = THREAD_HISTORY_LIMIT) -> list
 
 # --- Export helpers ---
 
+IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".svg"}
+
+def render_attachments_html(msg, channel_name: str) -> str:
+    """Render attachments as inline images or clickable links with relative paths."""
+    IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".svg"}
+    parts = []
+    for att in msg.attachments:
+        safe_name = f"{msg.id}_{att.filename}"
+        rel_path = f"{channel_name}-attachments/{safe_name}"
+        ext = ("." + att.filename.rsplit(".", 1)[-1].lower()) if "." in att.filename else ""
+        if ext in IMAGE_EXTS:
+            parts.append(
+                f"<a href=\"{rel_path}\" target=\"_blank\">"
+                f"<img src=\"{rel_path}\" alt=\"{att.filename}\" "
+                f"style=\"max-width:400px;max-height:300px;display:block;margin:4px 0;border-radius:4px;\" "
+                f"onerror=\"this.style.display=&quot;none&quot;\"></a>"
+            )
+        else:
+            parts.append(f"<a href=\"{rel_path}\" target=\"_blank\">&#128206; {att.filename}</a>")
+    return " ".join(parts)
+
+
+
 URL_RE = re.compile(r"https?://\S+")
 
 
@@ -801,12 +824,13 @@ async def export_channel_data(channel: discord.TextChannel, export_dir, fmt: str
         for msg in messages:
             ts = msg.created_at.strftime("%Y-%m-%d %H:%M")
             author = discord.utils.escape_markdown(msg.author.display_name)
-            body = discord.utils.escape_markdown(msg.content).replace("\n", "<br>")
+            body = discord.utils.escape_markdown(msg.content).replace("\n", "<br>") if msg.content else ""
             rxn = reactions_map.get(str(msg.id), {})
             rxn_str = " ".join(f'<span class="rxn">{e} {len(u)}</span>' for e, u in rxn.items())
+            att_html = render_attachments_html(msg, channel.name)
             rows.append(
                 f'<tr><td class="ts">{ts}</td><td class="author">{author}</td>'
-                f'<td class="content">{body} {rxn_str}</td></tr>'
+                f'<td class="content">{body}{att_html} {rxn_str}</td></tr>'
             )
         html = f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>{channel.name}</title>
@@ -814,6 +838,7 @@ async def export_channel_data(channel: discord.TextChannel, export_dir, fmt: str
 table{{border-collapse:collapse;width:100%}}td{{padding:4px 8px;vertical-align:top;border-bottom:1px solid #313244}}
 .ts{{color:#6c7086;white-space:nowrap;width:140px}}.author{{color:#89b4fa;width:160px;font-weight:bold}}
 .content{{word-break:break-word}}.rxn{{background:#313244;border-radius:4px;padding:2px 6px;margin:2px;font-size:0.85em}}
+a{{color:#89dceb}}img{{border:1px solid #313244}}
 </style></head><body>
 <h2>#{channel.name} — {len(messages)} messages</h2>
 <table>{"".join(rows)}</table></body></html>"""
@@ -1268,12 +1293,13 @@ async def export_state(interaction: discord.Interaction, format: str = "all", re
                     for msg in messages:
                         ts = msg.created_at.strftime("%Y-%m-%d %H:%M")
                         author = discord.utils.escape_markdown(msg.author.display_name)
-                        body = discord.utils.escape_markdown(msg.content).replace("\n", "<br>")
+                        body = discord.utils.escape_markdown(msg.content).replace("\n", "<br>") if msg.content else ""
                         rxn = reactions_map.get(str(msg.id), {})
                         rxn_str = " ".join(f'<span class="rxn">{e} {len(u)}</span>' for e, u in rxn.items())
+                        att_html = render_attachments_html(msg, channel.name)
                         rows.append(
                             f'<tr><td class="ts">{ts}</td><td class="author">{author}</td>'
-                            f'<td class="content">{body} {rxn_str}</td></tr>'
+                            f'<td class="content">{body}{att_html} {rxn_str}</td></tr>'
                         )
                     new_rows = "\n".join(rows)
                     if fpath.exists() and not is_bootstrap:
@@ -1286,6 +1312,7 @@ async def export_state(interaction: discord.Interaction, format: str = "all", re
 table{{border-collapse:collapse;width:100%}}td{{padding:4px 8px;vertical-align:top;border-bottom:1px solid #313244}}
 .ts{{color:#6c7086;white-space:nowrap;width:140px}}.author{{color:#89b4fa;width:160px;font-weight:bold}}
 .content{{word-break:break-word}}.rxn{{background:#313244;border-radius:4px;padding:2px 6px;margin:2px;font-size:0.85em}}
+a{{color:#89dceb}}img{{border:1px solid #313244}}
 </style></head><body>
 <h2>#{channel.name}</h2><table>{new_rows}</table></body></html>"""
                         fpath.write_text(html_out, encoding="utf-8")
