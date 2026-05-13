@@ -24,8 +24,9 @@ SYNAPSE_URL = "http://localhost:8008"
 ADMIN_USER = "gttadmin"
 ADMIN_PASSWORD = "gttadmin123"
 SERVER_NAME = "gtt.local"
+AS_TOKEN = "gtt-importer-as-token-change-me"  # Must match import-appservice.yaml
 EXPORTS_DIR = Path("C:/Users/colin/Documents/Merly/gtt-exports/latest")
-PROGRESS_FILE = Path("import-batch-progress.json")
+PROGRESS_FILE = Path("import-sqlite-progress.json")
 
 # Batch tuning — larger batches = fewer API calls = faster
 # Synapse allows up to 100 events per batch
@@ -59,6 +60,10 @@ def login():
 
 def headers(token):
     return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+def as_headers():
+    """Headers using application service token for batch send."""
+    return {"Authorization": f"Bearer {AS_TOKEN}", "Content-Type": "application/json"}
 
 
 def make_event_id():
@@ -138,20 +143,23 @@ def send_batch(token, room_id, events, prev_event_id, insertion_event_id=None):
     if insertion_event_id:
         params["batch_id"] = insertion_event_id
 
+    user_id = f"@{ADMIN_USER}:{SERVER_NAME}"
+    params["user_id"] = user_id
     body = {"events": events, "state_events_at_start": []}
 
     for attempt in range(MAX_RETRIES):
         try:
             resp = requests.post(
-                f"{SYNAPSE_URL}/_matrix/client/v1/rooms/{room_id}/batchsend",
-                headers=headers(token),
+                f"{SYNAPSE_URL}/_matrix/client/unstable/org.matrix.msc2716/rooms/{room_id}/batch_send",
+                headers=as_headers(),
                 params=params,
                 json=body,
                 timeout=60
             )
             if resp.status_code == 200:
                 data = resp.json()
-                return data.get("next_batch_id"), data.get("inserted_event_ids", [])
+                ids = data.get("event_ids", data.get("inserted_event_ids", []))
+                return data.get("next_batch_id"), ids
             elif resp.status_code == 429:
                 retry_ms = resp.json().get("retry_after_ms", 2000)
                 time.sleep(retry_ms / 1000)
@@ -258,7 +266,7 @@ def main():
     # Check batch send API is enabled
     print("Checking batch send API...")
     test_resp = requests.post(
-        f"{SYNAPSE_URL}/_matrix/client/v1/rooms/!test:gtt.local/batchsend",
+        f"{SYNAPSE_URL}/_matrix/client/unstable/org.matrix.msc2716/rooms/!test:gtt.local/batch_send",
         headers=headers(token),
         params={"prev_event_id": "$test"},
         json={"events": [], "state_events_at_start": []},
@@ -282,9 +290,16 @@ def main():
     total_msgs = 0
     total_rooms = 0
 
+    # Build a lookup by channel name stem — handles unicode emoji key mismatches
+    # Map normalized stem → room_id
+    room_id_map = {}
+    for key, val in progress.items():
+        if "room_id" in val:
+            room_id_map[key] = val["room_id"]
+
     for idx, json_file in enumerate(json_files):
         channel_name = json_file.stem
-        room_id = progress.get(channel_name, {}).get("room_id")
+        room_id = room_id_map.get(channel_name)
 
         if not room_id:
             print(f"[{idx+1}/{len(json_files)}] #{channel_name} — no room ID in progress, skipping")

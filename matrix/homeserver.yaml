@@ -52,3 +52,7 @@ allow_public_rooms_without_auth: true
 # Enable MSC2716 batch send for historical import
 experimental_features:
   msc2716_enabled: true
+
+# Register import script as application service
+app_service_config_files:
+  - /data/import-appservice.yaml
