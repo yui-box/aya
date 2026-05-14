@@ -221,15 +221,17 @@ All settings go in `.env`. See `.env.example` for the full list with description
 | `VAULT_PATH` | required | Absolute path to your Obsidian vault |
 | `EMBED_MODEL` | `nomic-embed-text` | Ollama embedding model |
 | `QDRANT_COLLECTION` | `vault` | Qdrant collection name |
-| `TOP_K` | `5` | Number of vault chunks retrieved per query |
-| `MIN_SCORE` | `0.45` | Hybrid score threshold below which the bot answers from reasoning rather than the vault |
+| `TOP_K` | `5` | Number of vault chunks returned per query |
+| `MIN_SCORE` | `0.45` | Hybrid score threshold — below this the bot answers from reasoning with no sources |
 | `KEYWORD_WEIGHT` | `0.3` | Weight of keyword matching vs vector similarity — higher boosts exact terms like DIF, RLR |
 | `ALLOWED_GUILDS` | *(all)* | Comma-separated guild IDs. Empty = allow all |
 | `ALLOWED_CHANNELS` | *(all)* | Comma-separated channel IDs. Empty = allow all |
-| `COOLDOWN_SECONDS` | `120` | Per-user cooldown for `@mention` (Anthropic API) |
-| `COOLDOWN_LOCAL_SECONDS` | `30` | Per-user cooldown for `/knowledge-base` and `/knowledge-search` |
-| `MAX_QUESTION_LENGTH` | `300` | Max characters per question |
-| `USE_THREADS` | `false` | Reply in threads instead of inline |
+| `COOLDOWN_SECONDS` | `30` | Per-user cooldown for `@mention` (Anthropic API) |
+| `COOLDOWN_LOCAL_SECONDS` | `10` | Per-user cooldown for `/knowledge-base` and `/knowledge-search` |
+| `COOLDOWN_EXEMPT_USERS` | *(none)* | Comma-separated Discord user IDs exempt from all cooldowns |
+| `MAX_QUESTION_LENGTH` | `500` | Max characters per question |
+| `USE_THREADS` | `true` | Reply in public threads (toggle off per-guild with `/thread-mode off`) |
+| `THREAD_HISTORY_LIMIT` | `30` | Number of bot-related exchanges to include in thread memory |
 | `REQUIRED_ROLE` | *(none)* | Role name required to use `@GTT Bot`. Empty = allow all |
 | `MOD_CHANNEL_ID` | *(none)* | Channel ID for automod alerts |
 | `GENERAL_CHANNEL_ID` | *(none)* | Channel ID for self-promo detection |
@@ -239,7 +241,7 @@ All settings go in `.env`. See `.env.example` for the full list with description
 
 ### Thread mode
 
-Set `USE_THREADS=true` in `.env` to default thread mode on for all guilds. Any member in an allowed server can also toggle it at runtime with `/thread-mode on` or `/thread-mode off` — this overrides the `.env` default for that server until the bot restarts.
+Thread mode is on by default. Set `USE_THREADS=false` in `.env` to disable it globally. Any member in an allowed server can also toggle it at runtime with `/thread-mode on` or `/thread-mode off` — this overrides the `.env` default for that server until the bot restarts.
 
 ---
 
