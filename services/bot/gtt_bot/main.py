@@ -7,7 +7,7 @@ from discord import app_commands
 
 import gtt_bot.globals as G
 from gtt_bot.automod.rules import check_automod
-from gtt_bot.commands import export_all, export_single, export_state, export_thread, knowledge, status, thread_mode_cmd
+from gtt_bot.commands import export_all, export_single, export_state, export_thread, glossary, knowledge, status, thread_mode_cmd
 from gtt_bot.config import (
     COOLDOWN_ANTHROPIC,
     DISCORD_MSG_LIMIT,
@@ -45,6 +45,7 @@ export_single.setup(tree)
 export_all.setup(tree)
 export_state.setup(tree)
 export_thread.setup(tree)
+glossary.setup(tree)
 
 
 async def _send_answer(message: discord.Message, answer: str, sources: str = ""):

@@ -104,5 +104,6 @@ The search is semantic — it understands meaning, not just keywords. Use **spec
 | `/knowledge-search <query>` | Private thread | Yes | You want a searchable, deletable record |
 | `/knowledge-base <query>` | DM only | No | You want fully private results |
 | `@GTT Bot <question>` | Public thread | Yes | You want a GTT-voiced answer with reasoning |
+| `/glossary [term]` | Ephemeral | No | Learn GTT terminology and find example queries |
 | `/status` | Ephemeral | No | Check bot health and config |
 | `/thread-mode on/off` | Ephemeral | No | Toggle thread replies for `@GTT Bot` |

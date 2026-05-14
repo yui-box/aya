@@ -96,25 +96,135 @@ GTT_QUERY_TERMS = [
     "deterministic intent folding",
     "DIF architecture",
     "DIF vs LLM",
+    "DIF verifier stochastic AI",
     "repository lifetime reasoning",
     "RLR vibe coding detection",
     "vibe coding is not engineering",
-    "AI hype structural incentives",
-    "open source as strategy",
-    "critical thinking engineering discipline",
-    "data oriented design",
-    "tech industry analysis",
-    "Mentor Merly",
-    "blast radius production systems",
-    "code review as ownership verification",
-    "technical debt ownership deficit",
+    "vibe coding commit history",
+    "ownership deficit technical debt",
+    "code review ownership verification",
     "commit history as signal",
-    "complexity distribution",
-    "test coverage intent",
+    "blast radius production systems",
+    "AI hype structural incentives",
+    "LLM pattern matching limitations",
+    "critical thinking engineering discipline",
+    "falsification over confirmation",
+    "data oriented design",
+    "structure of arrays cache coherency",
+    "systems programming memory layout",
+    "tech industry analysis incentives",
+    "open source as strategy",
+    "Mentor Merly vibe coding detection",
+    "complexity distribution abstraction cost",
+    "test coverage intent ownership",
     "knowledge graph vs database",
-    "engineering mentorship",
+    "engineering mentorship craft",
     "GTT community rules",
     "gtt bot architecture stack",
+]
+
+GTT_GLOSSARY = [
+    {
+        "term": "DIF",
+        "full": "Deterministic Intent Folding",
+        "definition": (
+            "Merly's proprietary ML architecture. Deterministic — same input always produces "
+            "same output, unlike stochastic LLMs. Up to 1,000,000x faster than LLMs for specific "
+            "tasks. Runs entirely locally with no cloud dependency. Not a generic design principle — "
+            "a specific technology Merly built."
+        ),
+        "example": "/knowledge-search deterministic intent folding merly architecture",
+    },
+    {
+        "term": "RLR",
+        "full": "Repository Lifetime Reasoning",
+        "definition": (
+            "Analyzing the full evolution of a software repository — every commit, every "
+            "structural change over time — rather than just its current snapshot. Enabled by "
+            "DIF's constant-time inference. How Mentor detects vibe coded projects at scale."
+        ),
+        "example": "/knowledge-search repository lifetime reasoning vibe coding detection",
+    },
+    {
+        "term": "Vibe Coding",
+        "full": "Vibe Coding",
+        "definition": (
+            "Using AI tools to generate code you don't understand and shipping it anyway. "
+            "Using AI tools is fine. Shipping code you cannot explain, debug, or defend is "
+            "abdication of engineering. The distinction is ownership, not tooling."
+        ),
+        "example": "/knowledge-search vibe coding ownership debugging commit history",
+    },
+    {
+        "term": "Mentor",
+        "full": "Mentor by Merly",
+        "definition": (
+            "Merly's first DIF-powered product. Analyzes software repositories for signs of "
+            "vibe coding by examining commit history at scale. Runs entirely locally. "
+            "Contributes results to a global database for quarantining compromised open source projects."
+        ),
+        "example": "@GTT Bot how does Mentor use RLR to detect vibe coding?",
+    },
+    {
+        "term": "DOD",
+        "full": "Data-Oriented Design",
+        "definition": (
+            "Organizing data for how it flows through hardware, not how it maps to concepts. "
+            "Structure of Arrays over Array of Structures. Cache lines stay hot, prefetcher works, "
+            "branch prediction succeeds. Foundational to DIF's performance — constant-time inference "
+            "requires control over memory layout."
+        ),
+        "example": "/knowledge-search structure of arrays cache coherency CPU bottleneck",
+    },
+    {
+        "term": "Ownership Deficit",
+        "full": "Ownership Deficit",
+        "definition": (
+            "Technical debt is not bad code — it's code nobody can confidently own, debug, or "
+            "explain. Debt is an ownership problem, not just a quality problem. A codebase where "
+            "nobody can answer 'why does this work?' is in debt regardless of test coverage or formatting."
+        ),
+        "example": "/knowledge-search technical debt ownership deficit commit history",
+    },
+    {
+        "term": "Blast Radius",
+        "full": "Blast Radius",
+        "definition": (
+            "The scope of damage when a production system fails. In GTT: the compounding cost "
+            "of shipping code nobody understands — silent breakage, undebuggable failures, "
+            "security holes from AI-generated logic, skill atrophy, and valuation fraud in "
+            "acquired codebases."
+        ),
+        "example": "/knowledge-search blast radius production systems complexity debt",
+    },
+    {
+        "term": "Code Review as Ownership Verification",
+        "full": "Code Review as Ownership Verification",
+        "definition": (
+            "Code review is not just 'does it work?' — it's verifying that the author "
+            "understands what they built. The real signal: can they explain why, what breaks "
+            "if you change this line, what alternatives were rejected. 'Tests pass' is the "
+            "baseline. The explanation is the standard."
+        ),
+        "example": "/knowledge-search code review ownership verification PR rationale",
+    },
+    {
+        "term": "AI Hype",
+        "full": "AI Hype vs Reality",
+        "definition": (
+            "AI hype is structural, not accidental — it serves financial interests. LLMs are "
+            "pattern-matching engines: genuinely useful in narrow ways, dangerously overstated "
+            "in broad claims. The GTT position is accuracy: neither boosterism nor reflexive "
+            "skepticism. Ask who benefits from you believing the marketing."
+        "full": "Critical Thinking as Engineering Discipline",
+        "definition": (
+            "Separating claim from evidence. Asking who benefits. Distinguishing demo from "
+            "production. Preferring falsification over confirmation. Holding uncertainty explicitly. "
+            "A technical competency, not a soft skill — applied to tools, architectures, and "
+            "vendor claims with the same rigor as code."
+        ),
+        "example": "/knowledge-search falsification over confirmation incentive structure",
+    },
 ]
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".svg"}

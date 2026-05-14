@@ -10,10 +10,10 @@ A complete reference for all GTT Bot slash commands.
 Ask a question and get a GTT-voiced answer grounded in the knowledge base.
 
 - Requires `GTT Sub Level 0` role
-- 2 minute cooldown per user
-- Max 1000 characters
-- Replies in a public thread
-- Supports follow-up questions inside the thread (remembers last 30 bot exchanges)
+- 30 second cooldown per user (exempt users bypass this via `COOLDOWN_EXEMPT_USERS`)
+- Max 500 characters
+- Replies in a public thread by default (toggle with `/thread-mode`)
+- Supports follow-up questions inside the thread (remembers last 30 bot-related exchanges)
 
 **Examples:**
 ```
@@ -28,7 +28,7 @@ Ask a question and get a GTT-voiced answer grounded in the knowledge base.
 Search the GTT vault directly. Results sent to your DMs only — mods cannot see.
 
 - Free (no API cost, runs locally)
-- 30 second cooldown per user
+- 10 second cooldown per user
 - Use specific terms, not questions
 
 **Examples:**
@@ -45,7 +45,7 @@ Search the GTT vault directly. Results sent to your DMs only — mods cannot see
 Search the GTT vault in a private thread. Only you and mods can see it. Deletable by mods.
 
 - Free (no API cost, runs locally)
-- 30 second cooldown per user
+- 10 second cooldown per user
 - Use specific terms, not questions
 
 **Examples:**
@@ -59,6 +59,17 @@ Search the GTT vault in a private thread. Only you and mods can see it. Deletabl
 
 ## Server Commands
 
+### `/glossary [term]`
+GTT terminology — definitions and example queries for every core concept.
+
+- Available to all members
+- Ephemeral — only you see the output
+- Leave `term` blank for the full glossary, or pick a specific term from the dropdown
+
+**Terms covered:** DIF, RLR, Vibe Coding, Mentor, DOD, Ownership Deficit, Blast Radius, Code Review as Ownership Verification, AI Hype, Critical Thinking
+
+---
+
 ### `/thread-mode <on|off>`
 Toggle whether `@GTT Bot` replies in threads or inline.
 
@@ -68,8 +79,8 @@ Toggle whether `@GTT Bot` replies in threads or inline.
 
 **Options:**
 ```
-/thread-mode on    ← bot creates a thread for each @mention
-/thread-mode off   ← bot replies inline (default)
+/thread-mode on    ← bot creates a thread for each @mention (default)
+/thread-mode off   ← bot replies inline
 ```
 
 ---
@@ -171,6 +182,26 @@ Incremental export — only fetches new messages since the last run. Saves to `g
 1. Delete `gtt-exports/export-state.json`
 2. Delete `gtt-exports/latest/`
 3. Run `/export-state format:all reactions:no`
+
+---
+
+### `/export-thread <format> <reactions>`
+Export the current thread you're in. Must be run from inside a thread.
+
+**Parameters:**
+| Parameter | Options | Default | Notes |
+|---|---|---|---|
+| `format` | `text` `json` `html` | required | Output format |
+| `reactions` | `yes` `no` | `no` | Include reactions |
+
+**Sent to your DMs as a zip file.**
+
+**Examples:**
+```
+/export-thread format:text reactions:no     ← plain transcript
+/export-thread format:json reactions:no     ← structured data
+/export-thread format:html reactions:no     ← browsable offline
+```
 
 ---
 

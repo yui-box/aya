@@ -1,6 +1,9 @@
 import asyncio
+import io
 import logging
+import re
 import time
+import zipfile
 
 import discord
 from discord import app_commands
@@ -17,6 +20,7 @@ from gtt_bot.discord_utils.cooldown import check_cooldown
 from gtt_bot.discord_utils.permissions import is_allowed_guild, is_allowed_channel
 from gtt_bot.rag.formatters import (
     extractive_summary,
+    format_bootstrap_html,
     format_raw_chunks,
     format_raw_chunks_plain,
     split_at_sentence,
@@ -40,9 +44,16 @@ def setup(tree: app_commands.CommandTree) -> None:
         return matches[:25]
 
     @tree.command(name="knowledge-base", description="Search the GTT vault directly (local, no API cost)")
-    @app_commands.describe(query="Use specific terms e.g. 'deterministic intent folding' not 'what is DIF'")
+    @app_commands.describe(
+        query="Use specific terms e.g. 'deterministic intent folding' not 'what is DIF'",
+        format="Output format: dm (markdown, default) or html (Bootstrap 5 file to DMs)",
+    )
+    @app_commands.choices(format=[
+        app_commands.Choice(name="dm", value="dm"),
+        app_commands.Choice(name="html", value="html"),
+    ])
     @app_commands.autocomplete(query=query_autocomplete)
-    async def knowledge_base(interaction: discord.Interaction, query: str):
+    async def knowledge_base(interaction: discord.Interaction, query: str, format: str = "dm"):
         if not is_allowed_guild(interaction.guild_id):
             await interaction.response.send_message("This bot isn't enabled in this server.", ephemeral=True)
             return
@@ -69,6 +80,29 @@ def setup(tree: app_commands.CommandTree) -> None:
             nodes = await asyncio.to_thread(retrieve_context, query)
             if not nodes:
                 await interaction.followup.send("Nothing found in the knowledge base for that query.", ephemeral=True)
+                return
+
+            if format == "html":
+                html_content = format_bootstrap_html(query, nodes).encode("utf-8")
+                safe_query = re.sub(r'[^\w\s-]', '', query).strip()
+                safe_query = re.sub(r'\s+', '-', safe_query)[:60].rstrip('-') or "results"
+                filename = f"kb-{safe_query}.html"
+                _buf = io.BytesIO()
+                with zipfile.ZipFile(_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                    zf.writestr(filename, html_content)
+                zip_bytes = _buf.getvalue()
+                try:
+                    dm = await interaction.user.create_dm()
+                    await dm.send(
+                        f"Knowledge base results for **{query}** — {len(nodes)} sources",
+                        file=discord.File(io.BytesIO(zip_bytes), filename=f"kb-{safe_query}.zip"),
+                    )
+                    await interaction.followup.send("Bootstrap HTML sent to your DMs.", ephemeral=True)
+                    log.info("knowledge-base HTML sent to %s for query: %s", interaction.user, query)
+                except discord.Forbidden:
+                    await interaction.followup.send(
+                        "Could not DM you — enable DMs from server members.", ephemeral=True
+                    )
                 return
 
             summary = extractive_summary(nodes)

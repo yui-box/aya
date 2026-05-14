@@ -60,9 +60,11 @@ A local, containerized Discord bot for the [Goju Tech Talk (GTT)](https://youtub
 | `/knowledge-base <query>` | Search vault, results sent to your DMs only | Free (local) |
 | `/thread-mode on/off` | Toggle thread replies on or off | Free (local) |
 | `/status` | Show knowledge base size, uptime, config (private) | Free (local) |
+| `/glossary` | GTT terminology with definitions and example queries | Free (local) |
 | `/export` | Export a single channel to text/JSON/HTML (GTT Team only) | Free (local) |
 | `/export-all` | Export all channels to disk (GTT Team only) | Free (local) |
 | `/export-state` | Incremental export — only new messages since last run (GTT Team only) | Free (local) |
+| `/export-thread` | Export the current thread to text/JSON/HTML (GTT Team only) | Free (local) |
 
 ### Thread memory
 

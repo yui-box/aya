@@ -77,7 +77,7 @@ def setup(tree: app_commands.CommandTree) -> None:
                     reactions_map[str(msg.id)] = await fetch_reactions(msg)
 
         safe_name = re.sub(r'[^\w\s-]', '', thread.name).strip()
-        safe_name = re.sub(r'\s+', '-', safe_name)[:80] or "thread"
+        safe_name = re.sub(r'\s+', '-', safe_name)[:80].rstrip('-') or "thread"
         filename_base = f"thread-{safe_name}"
 
         # Build export content
