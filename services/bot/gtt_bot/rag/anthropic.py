@@ -5,17 +5,14 @@ from gtt_bot.config import ANTHROPIC_API_KEY, SYSTEM_PROMPT
 
 def query_anthropic(question: str, context: str, history: list = None) -> str:
     ac = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-    if context:
-        prompt = (
-            "Context from the GTT knowledge base:\n"
-            "---------------------\n"
-            f"{context}\n"
-            "---------------------\n"
-            f"Question: {question}\n"
-            "Answer: "
-        )
-    else:
-        prompt = f"Question: {question}\nAnswer: "
+    prompt = (
+        "Context from the GTT knowledge base:\n"
+        "---------------------\n"
+        f"{context}\n"
+        "---------------------\n"
+        f"Question: {question}\n"
+        "Answer: "
+    )
     messages = []
     if history:
         # Add all history except the last user message (we use the prompt instead)
@@ -29,4 +26,6 @@ def query_anthropic(question: str, context: str, history: list = None) -> str:
         system=SYSTEM_PROMPT,
         messages=messages,
     )
+    if not message.content:
+        return "I'm not able to respond to that."
     return message.content[0].text.strip()

@@ -3,13 +3,14 @@ def extractive_summary(nodes: list) -> str:
     for i, node in enumerate(nodes, 1):
         chunk_content = node.get_content().strip()
         source = node.metadata.get("file_name", f"chunk {i}")
+        score = node.score or 0.0
         stem = source.replace(".md", "")
         content_lines = chunk_content.splitlines()
         if content_lines and content_lines[0].strip() == stem:
             content_lines = content_lines[1:]
         chunk_content = "\n".join(content_lines).strip()
         first_sentence = chunk_content.split(".")[0].strip() + "."
-        lines.append(f"**[{i}] {source}**\n{first_sentence}")
+        lines.append(f"**[{i}] {source}** `{score:.2f}`\n{first_sentence}")
     return "\n\n".join(lines)
 
 
@@ -62,9 +63,10 @@ def format_sources(nodes: list) -> str:
     seen = []
     for node in nodes:
         source = node.metadata.get("file_name", "unknown")
-        if source not in seen:
-            seen.append(source)
-    return "*Sources — " + ", ".join(seen) + "*"
+        score = node.score or 0.0
+        if source not in [s for s, _ in seen]:
+            seen.append((source, score))
+    return "*Sources — " + ", ".join(f"{s} `{sc:.2f}`" for s, sc in seen) + "*"
 
 
 def format_bootstrap_html(query: str, nodes: list) -> str:
@@ -79,13 +81,32 @@ def format_bootstrap_html(query: str, nodes: list) -> str:
         if lines and lines[0].strip() == stem:
             lines = lines[1:]
         content = "\n".join(lines).strip()
-        score = node.score or 0.0
+        hybrid = node.score or 0.0
+        vector = node.metadata.get("_vector_score", hybrid)
+        keyword = node.metadata.get("_keyword_score", 0.0)
         escaped = _html.escape(content)
+
+        def _bar(val: float, color: str, label: str) -> str:
+            pct = min(int(val * 100), 100)
+            bar_color = {"hybrid": "#1f6feb", "vector": "#388bfd", "kw": "#3fb950"}.get(color, "#6e7681")
+            return f"""
+            <div class="score-row">
+              <span class="score-label">{label}</span>
+              <div class="score-track">
+                <div class="score-fill" style="width:{pct}%;background:{bar_color}"></div>
+              </div>
+              <span class="score-val">{val:.3f}</span>
+            </div>"""
+
+        bars = _bar(hybrid, "hybrid", "hybrid") + _bar(vector, "vector", "vector") + _bar(keyword, "kw", "keyword")
+
         return f"""
         <div class="card mb-4 border-0 shadow-sm chunk-card">
-          <div class="card-header d-flex justify-content-between align-items-center py-2">
-            <span class="badge bg-primary font-monospace fs-6">[{index}] {_html.escape(source)}</span>
-            <span class="badge bg-secondary">score {score:.3f}</span>
+          <div class="card-header py-2">
+            <div class="d-flex justify-content-between align-items-start gap-3">
+              <span class="badge bg-primary font-monospace fs-6">[{index}] {_html.escape(source)}</span>
+              <div class="score-block">{bars}</div>
+            </div>
           </div>
           <div class="card-body">
             <pre class="chunk-pre mb-0"><code>{escaped}</code></pre>
@@ -101,11 +122,16 @@ def format_bootstrap_html(query: str, nodes: list) -> str:
             lines = lines[1:]
         content = "\n".join(lines).strip()
         first = (content.split(".")[0].strip() + ".") if content else ""
+        hybrid = node.score or 0.0
+        score_color = "success" if hybrid >= 0.6 else "warning" if hybrid >= 0.45 else "secondary"
         return f"""
         <div class="d-flex gap-3 mb-3 summary-item">
           <span class="badge bg-primary font-monospace align-self-start mt-1">{index}</span>
-          <div>
-            <div class="fw-semibold text-info mb-1">{_html.escape(source)}</div>
+          <div class="flex-grow-1">
+            <div class="d-flex justify-content-between align-items-center mb-1">
+              <span class="fw-semibold text-info">{_html.escape(source)}</span>
+              <span class="badge bg-{score_color} font-monospace">{hybrid:.3f}</span>
+            </div>
             <p class="mb-0 text-body-secondary">{_html.escape(first)}</p>
           </div>
         </div>"""
@@ -130,6 +156,12 @@ def format_bootstrap_html(query: str, nodes: list) -> str:
     .summary-item {{ border-bottom:1px solid #21262d; padding-bottom:.75rem; }}
     .query-box {{ background:#161b22; border:1px solid #30363d; border-radius:8px; }}
     .section-label {{ color:#8b949e; font-size:.75rem; text-transform:uppercase; letter-spacing:.08em; }}
+    .score-block {{ display:flex; flex-direction:column; gap:3px; min-width:200px; }}
+    .score-row {{ display:flex; align-items:center; gap:6px; }}
+    .score-label {{ color:#8b949e; font-size:.7rem; width:48px; text-align:right; flex-shrink:0; }}
+    .score-track {{ flex:1; height:6px; background:#21262d; border-radius:3px; overflow:hidden; }}
+    .score-fill {{ height:100%; border-radius:3px; transition:width .3s; }}
+    .score-val {{ color:#e6edf3; font-size:.7rem; font-family:monospace; width:34px; flex-shrink:0; }}
   </style>
 </head>
 <body>

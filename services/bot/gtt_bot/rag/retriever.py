@@ -1,5 +1,6 @@
 import logging
 import re
+import time
 
 from llama_index.core import VectorStoreIndex, Settings
 from llama_index.embeddings.ollama import OllamaEmbedding
@@ -21,6 +22,13 @@ _STOP_WORDS = frozenset({
     "this", "that", "these", "those", "it", "its", "me", "my", "you", "your",
     "he", "she", "we", "they", "them", "their", "our", "us",
     "tell", "explain", "give", "get", "go", "know", "think", "use", "make", "need",
+})
+
+# GTT-specific terms that trigger the fallback retrieval pass
+_GTT_KEYWORDS = frozenset({
+    "dif", "rlr", "merly", "mentor",
+    "deterministic", "stochastic", "folding",
+    "vibe", "lifetime", "ownership", "deficit", "blast",
 })
 
 
@@ -62,6 +70,10 @@ def _keyword_score(terms: list[str], text: str, filename: str = "") -> float:
     return 0.2 * (content_matches / len(terms)) + 0.8 * (fname_matches / len(terms))
 
 
+def _is_gtt_question(terms: list[str]) -> bool:
+    return bool(set(terms) & _GTT_KEYWORDS)
+
+
 def build_retriever():
     Settings.llm = None  # Prevent accidental OpenAI calls
     Settings.embed_model = OllamaEmbedding(model_name=EMBED_MODEL, base_url=OLLAMA_HOST)
@@ -71,10 +83,17 @@ def build_retriever():
     # Fetch the entire collection so hybrid keyword scoring can surface files
     # whose content uses acronyms (e.g. "DIF") but whose filename contains the full term.
     # For large corpora this caps at 500 to stay performant.
-    try:
-        total = client.get_collection(COLLECTION).points_count or 0
-    except Exception:
-        total = 0
+    # Wait for the indexer to finish — retries up to 30s before falling back
+    total = 0
+    for attempt in range(20):
+        try:
+            total = client.get_collection(COLLECTION).points_count or 0
+            if total > 0:
+                break
+        except Exception:
+            pass
+        log.info("Waiting for index to be ready (attempt %d/20)...", attempt + 1)
+        time.sleep(3)
     k = min(int(total), 500) if total else TOP_K * 4
     retriever = index.as_retriever(similarity_top_k=k)
     log.info("Vector retriever ready (k=%d, dedup to %d unique files)", k, TOP_K)
@@ -92,6 +111,8 @@ def retrieve_context(question: str) -> list:
             v = node.score or 0.0
             fname = node.metadata.get("file_name", "")
             k = _keyword_score(terms, node.get_content(), fname)
+            node.metadata["_vector_score"] = round(v, 4)
+            node.metadata["_keyword_score"] = round(k, 4)
             node.score = vector_weight * v + KEYWORD_WEIGHT * k
         nodes.sort(key=lambda n: n.score or 0, reverse=True)
 
@@ -102,16 +123,31 @@ def retrieve_context(question: str) -> list:
         if fname not in seen_files or (node.score or 0) > (seen_files[fname].score or 0):
             seen_files[fname] = node
 
-    results = list(seen_files.values())[:TOP_K]
+    ranked = list(seen_files.values())
+    results = [n for n in ranked[:TOP_K] if (n.score or 0) >= MIN_SCORE]
 
-    # Confidence gate — return empty if best result is below threshold
-    if not results or (results[0].score or 0) < MIN_SCORE:
-        log.info(
-            "retrieve_context: low confidence (best=%.3f, threshold=%.3f) for %r",
-            results[0].score if results else 0.0,
-            MIN_SCORE,
-            question[:80],
-        )
-        return []
+    if results:
+        return results
 
-    return results
+    # GTT fallback: lower threshold by 25% for GTT-specific questions so that
+    # correction-style phrasings ("isn't DIF just...") can still surface vault docs.
+    if _is_gtt_question(terms):
+        fallback_threshold = round(MIN_SCORE * 0.75, 3)
+        fallback = [n for n in ranked[:TOP_K] if (n.score or 0) >= fallback_threshold]
+        if fallback:
+            log.info(
+                "retrieve_context: GTT fallback triggered (best=%.3f, threshold=%.3f) for %r",
+                fallback[0].score or 0,
+                fallback_threshold,
+                question[:80],
+            )
+            return fallback
+
+    best = ranked[0].score if ranked else 0.0
+    log.info(
+        "retrieve_context: low confidence (best=%.3f, threshold=%.3f) for %r",
+        best,
+        MIN_SCORE,
+        question[:80],
+    )
+    return []
