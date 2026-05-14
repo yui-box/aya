@@ -57,9 +57,17 @@ def setup(tree: app_commands.CommandTree) -> None:
                     starter_author,
                     interaction.user,
                 )
-                await interaction.followup.send(
-                    f"Thread **{thread_name}** and all its messages have been deleted.", ephemeral=True
-                )
+                # The thread (and its webhook) are gone — send confirmation via DM instead.
+                try:
+                    dm = await interaction.user.create_dm()
+                    await dm.send(
+                        f"✅ Thread **{thread_name}** and all its messages have been deleted."
+                    )
+                except discord.Forbidden:
+                    log.warning(
+                        "archive-thread: could not DM deletion confirmation to %s (DMs closed)",
+                        interaction.user,
+                    )
             except discord.Forbidden:
                 await interaction.followup.send("Missing permissions to delete this thread.", ephemeral=True)
             except Exception:
