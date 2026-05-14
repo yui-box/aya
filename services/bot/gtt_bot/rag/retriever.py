@@ -1,3 +1,4 @@
+import json
 import logging
 import re
 import time
@@ -74,6 +75,34 @@ def _is_gtt_question(terms: list[str]) -> bool:
     return bool(set(terms) & _GTT_KEYWORDS)
 
 
+def _build_query_terms(client, collection: str) -> list[str]:
+    """Derive autocomplete terms from vault filenames stored in Qdrant."""
+    seen: set[str] = set()
+    terms: list[str] = []
+    offset = None
+    while True:
+        points, offset = client.scroll(
+            collection_name=collection,
+            with_payload=True,
+            limit=100,
+            offset=offset,
+        )
+        for point in points:
+            raw = point.payload.get("_node_content", "")
+            if not raw:
+                continue
+            try:
+                fname = json.loads(raw).get("metadata", {}).get("file_name", "")
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if fname and fname not in seen:
+                seen.add(fname)
+                terms.append(fname.removesuffix(".md").replace("-", " "))
+        if offset is None:
+            break
+    return sorted(terms)
+
+
 def build_retriever():
     Settings.llm = None  # Prevent accidental OpenAI calls
     Settings.embed_model = OllamaEmbedding(model_name=EMBED_MODEL, base_url=OLLAMA_HOST)
@@ -96,6 +125,14 @@ def build_retriever():
         time.sleep(3)
     k = min(int(total), 500) if total else TOP_K * 4
     retriever = index.as_retriever(similarity_top_k=k)
+
+    try:
+        from gtt_bot.config import GTT_QUERY_TERMS
+        G.query_terms = _build_query_terms(client, COLLECTION) or GTT_QUERY_TERMS
+        log.info("Query terms loaded: %d terms from vault", len(G.query_terms))
+    except Exception:
+        log.exception("Failed to build query terms from vault; using static fallback")
+
     log.info("Vector retriever ready (k=%d, dedup to %d unique files)", k, TOP_K)
     return retriever
 

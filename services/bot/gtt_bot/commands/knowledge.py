@@ -13,7 +13,6 @@ from gtt_bot.config import (
     COOLDOWN_EXEMPT_USERS,
     COOLDOWN_LOCAL,
     DISCORD_MSG_LIMIT,
-    GTT_QUERY_TERMS,
     MAX_QUESTION_LENGTH,
 )
 from gtt_bot.discord_utils.cooldown import check_cooldown
@@ -38,7 +37,7 @@ def setup(tree: app_commands.CommandTree) -> None:
         current_lower = current.lower()
         matches = [
             app_commands.Choice(name=term, value=term)
-            for term in GTT_QUERY_TERMS
+            for term in G.query_terms
             if current_lower in term.lower()
         ]
         return matches[:25]
