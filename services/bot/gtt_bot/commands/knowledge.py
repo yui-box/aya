@@ -17,7 +17,7 @@ from gtt_bot.config import (
     MAX_QUESTION_LENGTH,
 )
 from gtt_bot.discord_utils.cooldown import check_cooldown
-from gtt_bot.discord_utils.permissions import is_allowed_guild, is_allowed_channel
+from gtt_bot.discord_utils.permissions import is_allowed_guild
 from gtt_bot.rag.formatters import (
     extractive_summary,
     format_bootstrap_html,
@@ -56,9 +56,6 @@ def setup(tree: app_commands.CommandTree) -> None:
     async def knowledge_base(interaction: discord.Interaction, query: str, format: str = "dm"):
         if not is_allowed_guild(interaction.guild_id):
             await interaction.response.send_message("This bot isn't enabled in this server.", ephemeral=True)
-            return
-        if not is_allowed_channel(interaction.channel):
-            await interaction.response.send_message("This command isn't enabled in this channel.", ephemeral=True)
             return
         if len(query) > MAX_QUESTION_LENGTH:
             await interaction.response.send_message(
@@ -140,9 +137,6 @@ def setup(tree: app_commands.CommandTree) -> None:
     async def knowledge_search(interaction: discord.Interaction, query: str):
         if not is_allowed_guild(interaction.guild_id):
             await interaction.response.send_message("This bot isn't enabled in this server.", ephemeral=True)
-            return
-        if not is_allowed_channel(interaction.channel):
-            await interaction.response.send_message("This command isn't enabled in this channel.", ephemeral=True)
             return
         if len(query) > MAX_QUESTION_LENGTH:
             await interaction.response.send_message(
