@@ -10,7 +10,9 @@ def extractive_summary(nodes: list) -> str:
             content_lines = content_lines[1:]
         chunk_content = "\n".join(content_lines).strip()
         first_sentence = chunk_content.split(".")[0].strip() + "."
-        lines.append(f"**[{i}] {source}** `{score:.2f}`\n{first_sentence}")
+        kw = node.metadata.get("_keyword_score", 0.0)
+        match_tag = " — **100% match**" if kw >= 1.0 else ""
+        lines.append(f"**[{i}] {source}** `{score:.2f}`{match_tag}\n{first_sentence}")
     return "\n\n".join(lines)
 
 
@@ -34,8 +36,10 @@ def format_raw_chunks_plain(nodes: list) -> str:
         if lines and lines[0].strip() == stem:
             lines = lines[1:]
         chunk_content = "\n".join(lines).strip()
+        kw = node.metadata.get("_keyword_score", 0.0)
+        match_tag = " — **100% match**" if kw >= 1.0 else ""
         quoted = "\n".join(f"> {line}" if line.strip() else ">" for line in chunk_content.splitlines())
-        parts.append(f"**[{i}]** `{source}`\n{quoted}")
+        parts.append(f"**[{i}]** `{source}`{match_tag}\n{quoted}")
     return "\n\n---\n\n".join(parts)
 
 
@@ -99,12 +103,13 @@ def format_bootstrap_html(query: str, nodes: list) -> str:
             </div>"""
 
         bars = _bar(hybrid, "hybrid", "hybrid") + _bar(vector, "vector", "vector") + _bar(keyword, "kw", "keyword")
+        match_badge = '<span class="badge bg-success ms-2">100% match</span>' if keyword >= 1.0 else ""
 
         return f"""
         <div class="card mb-4 border-0 shadow-sm chunk-card">
           <div class="card-header py-2">
             <div class="d-flex justify-content-between align-items-start gap-3">
-              <span class="badge bg-primary font-monospace fs-6">[{index}] {_html.escape(source)}</span>
+              <span class="badge bg-primary font-monospace fs-6">[{index}] {_html.escape(source)}</span>{match_badge}
               <div class="score-block">{bars}</div>
             </div>
           </div>
