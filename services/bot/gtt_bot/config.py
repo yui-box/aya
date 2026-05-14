@@ -8,6 +8,8 @@ EMBED_MODEL = os.environ["EMBED_MODEL"]
 COLLECTION = os.environ["QDRANT_COLLECTION"]
 ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
 TOP_K = int(os.environ.get("TOP_K", "5"))
+MIN_SCORE = float(os.environ.get("MIN_SCORE", "0.45"))
+KEYWORD_WEIGHT = float(os.environ.get("KEYWORD_WEIGHT", "0.3"))
 
 ALLOWED_CHANNELS = set(
     int(x.strip()) for x in os.environ.get("ALLOWED_CHANNELS", "").split(",") if x.strip()
@@ -27,7 +29,7 @@ NEW_ACCOUNT_DAYS = int(os.environ.get("NEW_ACCOUNT_DAYS", "7"))
 SUSPICIOUS_MSG_LENGTH = int(os.environ.get("SUSPICIOUS_MSG_LENGTH", "200"))
 REQUIRED_ROLE_FOR_AUTOMOD = os.environ.get("REQUIRED_ROLE", "GTT Sub Level 0").strip()
 
-DEFAULT_USE_THREADS = os.environ.get("USE_THREADS", "false").lower() == "true"
+DEFAULT_USE_THREADS = os.environ.get("USE_THREADS", "true").lower() == "true"
 
 DISCORD_MSG_LIMIT = 2000
 

@@ -222,6 +222,8 @@ All settings go in `.env`. See `.env.example` for the full list with description
 | `EMBED_MODEL` | `nomic-embed-text` | Ollama embedding model |
 | `QDRANT_COLLECTION` | `vault` | Qdrant collection name |
 | `TOP_K` | `5` | Number of vault chunks retrieved per query |
+| `MIN_SCORE` | `0.45` | Hybrid score threshold below which the bot answers from reasoning rather than the vault |
+| `KEYWORD_WEIGHT` | `0.3` | Weight of keyword matching vs vector similarity — higher boosts exact terms like DIF, RLR |
 | `ALLOWED_GUILDS` | *(all)* | Comma-separated guild IDs. Empty = allow all |
 | `ALLOWED_CHANNELS` | *(all)* | Comma-separated channel IDs. Empty = allow all |
 | `COOLDOWN_SECONDS` | `120` | Per-user cooldown for `@mention` (Anthropic API) |

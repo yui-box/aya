@@ -45,16 +45,17 @@ export_all.setup(tree)
 export_state.setup(tree)
 
 
-async def _send_answer(message: discord.Message, answer: str, sources: str):
+async def _send_answer(message: discord.Message, answer: str, sources: str = ""):
     # Split answer at sentence boundaries, then attach sources to the last chunk
     # if it fits — otherwise send it as a separate message so it's never sliced mid-backtick.
     chunks = split_at_sentence(answer)
-    last = chunks[-1]
-    candidate = f"{last}\n\n{sources}"
-    if len(candidate) <= DISCORD_MSG_LIMIT:
-        chunks[-1] = candidate
-    else:
-        chunks.append(sources)
+    if sources:
+        last = chunks[-1]
+        candidate = f"{last}\n\n{sources}"
+        if len(candidate) <= DISCORD_MSG_LIMIT:
+            chunks[-1] = candidate
+        else:
+            chunks.append(sources)
 
     use_threads = get_thread_mode(message.guild.id) if message.guild else False
     if use_threads and isinstance(message.channel, discord.TextChannel):
@@ -115,10 +116,20 @@ async def on_message(message: discord.Message):
         async with message.channel.typing():
             try:
                 nodes = await asyncio.to_thread(retrieve_context, question)
-                context = "\n\n".join(n.get_content() for n in nodes)
                 history = await get_thread_history(message.channel, client, limit=THREAD_HISTORY_LIMIT)
-                answer = await asyncio.to_thread(query_anthropic, question, context, history)
-                sources = format_sources(nodes)
+
+                if not nodes:
+                    # Below confidence threshold — answer from training, flag the gap
+                    raw = await asyncio.to_thread(query_anthropic, question, "", history)
+                    answer = (
+                        "That's not something the GTT knowledge base covers directly, "
+                        "but I can reason from what I know:\n\n" + raw
+                    )
+                    sources = ""
+                else:
+                    context = "\n\n".join(n.get_content() for n in nodes)
+                    answer = await asyncio.to_thread(query_anthropic, question, context, history)
+                    sources = format_sources(nodes)
             except Exception:
                 log.exception("Query failed")
                 await message.reply("Something went wrong answering that.")
