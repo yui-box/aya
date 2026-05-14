@@ -116,12 +116,7 @@ async def on_message(message: discord.Message):
                 history = await get_thread_history(message.channel, client, limit=THREAD_HISTORY_LIMIT)
 
                 if not nodes:
-                    # Below confidence threshold — answer from training, flag the gap
-                    raw = await asyncio.to_thread(query_anthropic, question, "", history)
-                    answer = (
-                        "That's not something the GTT knowledge base covers directly, "
-                        "but I can reason from what I know:\n\n" + raw
-                    )
+                    answer = await asyncio.to_thread(query_anthropic, question, "", history)
                     sources = ""
                 else:
                     context = "\n\n".join(n.get_content() for n in nodes)
