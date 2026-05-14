@@ -11,6 +11,7 @@ from gtt_bot.commands import export_all, export_single, export_state, knowledge,
 from gtt_bot.config import (
     COOLDOWN_ANTHROPIC,
     DISCORD_MSG_LIMIT,
+    COOLDOWN_EXEMPT_USERS,
     DISCORD_TOKEN,
     MAX_QUESTION_LENGTH,
     MOD_CHANNEL_ID,
@@ -100,12 +101,12 @@ async def on_message(message: discord.Message):
         await message.reply(f"Keep it under {MAX_QUESTION_LENGTH} characters.")
         return
 
-    remaining = check_cooldown(message.author.id, G.anthropic_cooldowns, COOLDOWN_ANTHROPIC)
-    if remaining > 0:
-        await message.reply(f"Slow down — you can ask again in {int(remaining) + 1}s.", delete_after=5)
-        return
-
-    G.anthropic_cooldowns[message.author.id] = time.time()
+    if message.author.id not in COOLDOWN_EXEMPT_USERS:
+        remaining = check_cooldown(message.author.id, G.anthropic_cooldowns, COOLDOWN_ANTHROPIC)
+        if remaining > 0:
+            await message.reply(f"Slow down — you can ask again in {int(remaining) + 1}s.", delete_after=5)
+            return
+        G.anthropic_cooldowns[message.author.id] = time.time()
 
     try:
         async with message.channel.typing():

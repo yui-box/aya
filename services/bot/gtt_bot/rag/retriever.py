@@ -35,12 +35,31 @@ def _significant_terms(query: str) -> list[str]:
     return list(dict.fromkeys(terms))           # deduplicate, preserve order
 
 
-def _keyword_score(terms: list[str], text: str) -> float:
+def _keyword_score(terms: list[str], text: str, filename: str = "") -> float:
     if not terms:
         return 0.0
+
     text_lower = text.lower()
-    matches = sum(1 for t in terms if re.search(r'\b' + re.escape(t) + r'\b', text_lower))
-    return matches / len(terms)
+    fname_words = re.findall(r'\w+', filename.replace('.md', '')) if filename else []
+    fname_text = ' '.join(fname_words).lower()
+    # Initials of filename words — lets "dif" match "deterministic-intent-folding.md"
+    fname_initials = ''.join(w[0] for w in fname_words).lower() if fname_words else ''
+
+    content_matches = sum(
+        1 for t in terms if re.search(r'\b' + re.escape(t) + r'\b', text_lower)
+    )
+    fname_matches = 0
+    for t in terms:
+        if re.search(r'\b' + re.escape(t) + r'\b', fname_text):
+            fname_matches += 1
+        elif len(t) >= 2 and fname_initials == t.lower():
+            # Acronym match: "dif" → initials of "deterministic-intent-folding"
+            fname_matches += 1
+
+    # Filename match is a much stronger relevance signal than content mention.
+    # A file whose name encodes the topic IS the authoritative source; a file that
+    # merely mentions the topic is supporting context.
+    return 0.2 * (content_matches / len(terms)) + 0.8 * (fname_matches / len(terms))
 
 
 def build_retriever():
@@ -49,9 +68,16 @@ def build_retriever():
     client = QdrantClient(url=QDRANT_HOST)
     vector_store = QdrantVectorStore(client=client, collection_name=COLLECTION)
     index = VectorStoreIndex.from_vector_store(vector_store)
-    # Fetch more than TOP_K so deduplication still yields TOP_K unique files
-    retriever = index.as_retriever(similarity_top_k=TOP_K * 4)
-    log.info("Vector retriever ready (k=%d, dedup to %d unique files)", TOP_K * 4, TOP_K)
+    # Fetch the entire collection so hybrid keyword scoring can surface files
+    # whose content uses acronyms (e.g. "DIF") but whose filename contains the full term.
+    # For large corpora this caps at 500 to stay performant.
+    try:
+        total = client.get_collection(COLLECTION).points_count or 0
+    except Exception:
+        total = 0
+    k = min(int(total), 500) if total else TOP_K * 4
+    retriever = index.as_retriever(similarity_top_k=k)
+    log.info("Vector retriever ready (k=%d, dedup to %d unique files)", k, TOP_K)
     return retriever
 
 
@@ -64,7 +90,8 @@ def retrieve_context(question: str) -> list:
     if terms:
         for node in nodes:
             v = node.score or 0.0
-            k = _keyword_score(terms, node.get_content())
+            fname = node.metadata.get("file_name", "")
+            k = _keyword_score(terms, node.get_content(), fname)
             node.score = vector_weight * v + KEYWORD_WEIGHT * k
         nodes.sort(key=lambda n: n.score or 0, reverse=True)
 

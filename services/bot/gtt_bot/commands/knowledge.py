@@ -7,10 +7,11 @@ from discord import app_commands
 
 import gtt_bot.globals as G
 from gtt_bot.config import (
-    GTT_QUERY_TERMS,
-    MAX_QUESTION_LENGTH,
+    COOLDOWN_EXEMPT_USERS,
     COOLDOWN_LOCAL,
     DISCORD_MSG_LIMIT,
+    GTT_QUERY_TERMS,
+    MAX_QUESTION_LENGTH,
 )
 from gtt_bot.discord_utils.cooldown import check_cooldown
 from gtt_bot.discord_utils.permissions import is_allowed_guild, is_allowed_channel
@@ -53,14 +54,15 @@ def setup(tree: app_commands.CommandTree) -> None:
                 f"Query too long — keep it under {MAX_QUESTION_LENGTH} characters.", ephemeral=True
             )
             return
-        remaining = check_cooldown(interaction.user.id, G.local_cooldowns, COOLDOWN_LOCAL)
-        if remaining > 0:
-            await interaction.response.send_message(
-                f"Slow down — you can search again in {int(remaining) + 1}s.", ephemeral=True
-            )
-            return
+        if interaction.user.id not in COOLDOWN_EXEMPT_USERS:
+            remaining = check_cooldown(interaction.user.id, G.local_cooldowns, COOLDOWN_LOCAL)
+            if remaining > 0:
+                await interaction.response.send_message(
+                    f"Slow down — you can search again in {int(remaining) + 1}s.", ephemeral=True
+                )
+                return
+            G.local_cooldowns[interaction.user.id] = time.time()
 
-        G.local_cooldowns[interaction.user.id] = time.time()
         await interaction.response.defer(ephemeral=True)
 
         try:
@@ -113,14 +115,15 @@ def setup(tree: app_commands.CommandTree) -> None:
                 f"Query too long — keep it under {MAX_QUESTION_LENGTH} characters.", ephemeral=True
             )
             return
-        remaining = check_cooldown(interaction.user.id, G.local_cooldowns, COOLDOWN_LOCAL)
-        if remaining > 0:
-            await interaction.response.send_message(
-                f"Slow down — you can search again in {int(remaining) + 1}s.", ephemeral=True
-            )
-            return
+        if interaction.user.id not in COOLDOWN_EXEMPT_USERS:
+            remaining = check_cooldown(interaction.user.id, G.local_cooldowns, COOLDOWN_LOCAL)
+            if remaining > 0:
+                await interaction.response.send_message(
+                    f"Slow down — you can search again in {int(remaining) + 1}s.", ephemeral=True
+                )
+                return
+            G.local_cooldowns[interaction.user.id] = time.time()
 
-        G.local_cooldowns[interaction.user.id] = time.time()
         await interaction.response.defer(ephemeral=True)
 
         try:

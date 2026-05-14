@@ -32,10 +32,8 @@ def is_noise_chunk(text: str) -> bool:
     stripped = text.strip()
     if not stripped:
         return True
-    # Pure frontmatter block
     if FRONTMATTER_RE.match(stripped):
         return True
-    # Frontmatter with nothing else meaningful (under 30 chars after stripping --- blocks)
     without_fm = re.sub(r"---[\s\S]*?---", "", stripped).strip()
     if len(without_fm) < 30:
         return True
@@ -45,12 +43,19 @@ def is_noise_chunk(text: str) -> bool:
 def build_index():
     log.info("Building index from %s", VAULT_DIR)
 
-    Settings.embed_model = OllamaEmbedding(
-        model_name=EMBED_MODEL, base_url=OLLAMA_HOST
-    )
-    Settings.node_parser = SentenceSplitter(chunk_size=512, chunk_overlap=50)
+    embed_model = OllamaEmbedding(model_name=EMBED_MODEL, base_url=OLLAMA_HOST)
+    Settings.embed_model = embed_model
+    Settings.llm = None
 
     client = QdrantClient(url=QDRANT_HOST)
+
+    # Wipe the collection so no stale embeddings from previous runs persist
+    try:
+        client.delete_collection(COLLECTION)
+        log.info("Cleared existing collection %s", COLLECTION)
+    except Exception:
+        pass
+
     vector_store = QdrantVectorStore(client=client, collection_name=COLLECTION)
     storage_context = StorageContext.from_defaults(vector_store=vector_store)
 
@@ -61,16 +66,25 @@ def build_index():
     unique_files = len(set(d.metadata.get("file_path") for d in docs))
     log.info("Loaded %d markdown documents from %d files", len(docs), unique_files)
 
-    # Parse nodes and filter out noise chunks before indexing
     parser = SentenceSplitter(chunk_size=512, chunk_overlap=50)
     nodes = parser.get_nodes_from_documents(docs)
     clean_nodes = [n for n in nodes if not is_noise_chunk(n.get_content())]
 
-    log.info("Indexing %d/%d chunks (filtered %d noise chunks)",
-             len(clean_nodes), len(nodes), len(nodes) - len(clean_nodes))
+    log.info(
+        "Indexing %d/%d chunks (filtered %d noise chunks)",
+        len(clean_nodes), len(nodes), len(nodes) - len(clean_nodes),
+    )
+
+    # Embed each chunk individually — pre-computing and setting node.embedding
+    # ensures VectorStoreIndex uses per-chunk content, not document-level embeddings.
+    texts = [n.get_content() for n in clean_nodes]
+    log.info("Embedding %d chunks via %s...", len(texts), EMBED_MODEL)
+    embeddings = embed_model.get_text_embedding_batch(texts, show_progress=False)
+    for node, emb in zip(clean_nodes, embeddings):
+        node.embedding = emb
 
     VectorStoreIndex(clean_nodes, storage_context=storage_context)
-    log.info("Index build complete (collection=%s)", COLLECTION)
+    log.info("Index build complete (collection=%s, chunks=%d)", COLLECTION, len(clean_nodes))
 
 
 class DebouncedReindex(FileSystemEventHandler):
@@ -98,7 +112,6 @@ class DebouncedReindex(FileSystemEventHandler):
 def main():
     Path(VAULT_DIR).mkdir(parents=True, exist_ok=True)
 
-    # Initial build
     while True:
         try:
             build_index()
