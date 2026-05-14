@@ -60,6 +60,9 @@ A local, containerized Discord bot for the [Goju Tech Talk (GTT)](https://youtub
 | `/knowledge-base <query>` | Search vault, results sent to your DMs only | Free (local) |
 | `/thread-mode on/off` | Toggle thread replies on or off | Free (local) |
 | `/status` | Show knowledge base size, uptime, config (private) | Free (local) |
+| `/export` | Export a single channel to text/JSON/HTML (GTT Team only) | Free (local) |
+| `/export-all` | Export all channels to disk (GTT Team only) | Free (local) |
+| `/export-state` | Incremental export — only new messages since last run (GTT Team only) | Free (local) |
 
 ### Thread memory
 
@@ -80,6 +83,44 @@ The 30-message cap keeps token costs controlled. Long threads are still readable
 | **Discord client** | discord.py | Bot integration |
 | **File watcher** | watchdog | Auto-reindex on vault change |
 | **Containerization** | Docker Compose | Multi-service orchestration |
+
+---
+
+## Project structure
+
+```
+services/bot/
+├── main.py                      # Entry point (shim — calls gtt_bot.main)
+├── gtt_bot/
+│   ├── main.py                  # Client setup, on_ready, on_message, bot.run()
+│   ├── config.py                # All env vars, constants, SYSTEM_PROMPT
+│   ├── globals.py               # Mutable runtime state (cooldowns, thread mode, retriever)
+│   ├── rag/
+│   │   ├── retriever.py         # build_retriever(), retrieve_context()
+│   │   ├── anthropic.py         # query_anthropic()
+│   │   └── formatters.py        # Chunk formatting and text splitting helpers
+│   ├── discord_utils/
+│   │   ├── permissions.py       # Role, channel, and guild access checks
+│   │   ├── cooldown.py          # Per-user rate limiting
+│   │   ├── thread_mode.py       # get/set thread mode per guild
+│   │   └── thread_history.py    # Conversation history from threads
+│   ├── automod/
+│   │   ├── rules.py             # check_automod() — rule evaluation and timeouts
+│   │   └── alerts.py            # send_mod_alert()
+│   ├── export/
+│   │   ├── core.py              # Channel export, attachment download, URL extraction
+│   │   ├── formatters.py        # Message serialization and HTML rendering
+│   │   └── state.py             # Incremental export state (load/save)
+│   └── commands/
+│       ├── knowledge.py         # /knowledge-base, /knowledge-search
+│       ├── status.py            # /status
+│       ├── thread_mode_cmd.py   # /thread-mode
+│       ├── export_single.py     # /export
+│       ├── export_all.py        # /export-all
+│       └── export_state.py      # /export-state
+services/indexer/
+└── main.py                      # Vault watcher and Qdrant indexer
+```
 
 ---
 
@@ -257,4 +298,4 @@ If `/knowledge-base` returns nothing, the indexer may not have run yet. Check it
 
 This is a proof-of-concept built for the GTT community. The knowledge base (vault) is separate from the bot code by design — the code is public, the knowledge base is yours to keep private or share as you choose.
 
-To adapt this for your own community: replace the `SYSTEM_PROMPT` in `services/bot/main.py` with your own worldview, drop your markdown notes into the vault, and you have a bot that reflects your community's actual knowledge and voice.
+To adapt this for your own community: replace the `SYSTEM_PROMPT` in `services/bot/gtt_bot/config.py` with your own worldview, drop your markdown notes into the vault, and you have a bot that reflects your community's actual knowledge and voice.
