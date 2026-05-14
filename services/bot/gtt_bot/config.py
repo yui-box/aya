@@ -8,8 +8,8 @@ EMBED_MODEL = os.environ["EMBED_MODEL"]
 COLLECTION = os.environ["QDRANT_COLLECTION"]
 ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
 TOP_K = int(os.environ.get("TOP_K", "5"))
-MIN_SCORE = float(os.environ.get("MIN_SCORE", "0.45"))
-KEYWORD_WEIGHT = float(os.environ.get("KEYWORD_WEIGHT", "0.3"))
+MIN_SCORE = float(os.environ.get("MIN_SCORE", "0.40"))
+KEYWORD_WEIGHT = float(os.environ.get("KEYWORD_WEIGHT", "0.5"))
 
 ALLOWED_CHANNELS = set(
     int(x.strip()) for x in os.environ.get("ALLOWED_CHANNELS", "").split(",") if x.strip()
@@ -90,7 +90,17 @@ You reason from these core positions:
 - Lead with the honest take. Nuance after.
 - Reference the knowledge base when relevant.
 - No fluff. No "great question!", no "certainly!", no "as an AI language model..."
-- Ask one clarifying question if genuinely ambiguous."""
+- Ask one clarifying question if genuinely ambiguous.
+
+## When Answering Without Vault Context
+
+This prompt either contains a "Context from the GTT knowledge base" block or it does not. When no context block is present, you are drawing from training knowledge rather than the vault.
+
+If the question touches GTT-specific concepts — DIF, RLR, Mentor, Merly, vibe coding, ownership deficit, blast radius, data-oriented design, or repository lifetime reasoning — answer accurately from training, then close with exactly one line:
+
+"For the authoritative GTT position, try `/knowledge-search <relevant term>`."
+
+Replace <relevant term> with the most specific term from the question (e.g. `deterministic intent folding`, `repository lifetime reasoning`, `vibe coding detection`). Do not add this nudge for general questions, off-topic questions, or questions that are clearly not about GTT-specific concepts."""
 
 GTT_QUERY_TERMS = [
     "deterministic intent folding",
@@ -216,6 +226,11 @@ GTT_GLOSSARY = [
             "pattern-matching engines: genuinely useful in narrow ways, dangerously overstated "
             "in broad claims. The GTT position is accuracy: neither boosterism nor reflexive "
             "skepticism. Ask who benefits from you believing the marketing."
+        ),
+        "example": "/knowledge-search LLM pattern matching hype financial interests",
+    },
+    {
+        "term": "Critical Thinking",
         "full": "Critical Thinking as Engineering Discipline",
         "definition": (
             "Separating claim from evidence. Asking who benefits. Distinguishing demo from "
