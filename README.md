@@ -1,10 +1,10 @@
-# GTT Bot
+# RAG + SLM Discord Bot — Architecture Plan
 
-A local, containerized Discord bot for the [Goju Tech Talk (GTT)](https://youtube.com/@gojutechtalk) community — a space for software engineers, scientists, technology enthusiasts, and curious minds built around honest tech analysis and deep critical thinking. Answers questions grounded in an Obsidian knowledge base using RAG — local vector search for retrieval, Claude (Anthropic API) for opinionated, GTT-voiced responses.
+**Goal:** Local, containerized Discord bot that answers questions based on an Obsidian vault using RAG + a small language model.
 
 ---
 
-## Architecture
+## High-Level Architecture
 
 ```
 ┌─────────────────────┐                          ┌─────────────────────┐
@@ -16,134 +16,105 @@ A local, containerized Discord bot for the [Goju Tech Talk (GTT)](https://youtub
 ╔══════════════════════════ Docker host (docker-compose) ══════════════════════════╗
 ║                                                                                  ║
 ║   ┌──────────────────┐      ┌──────────────────┐      ┌──────────────────┐       ║
-║   │  Indexer service │      │  Discord bot     │      │  Ollama          │       ║
-║   │  - Watches vault │◄────►│  - discord.py    │◄────►│  - nomic-embed   │       ║
-║   │  - Chunks + embeds      │  - LlamaIndex    │      └──────────────────┘       ║
-║   └────────┬─────────┘      └────────┬─────────┘                                ║
-║            │                         │ Anthropic API (answer generation)         ║
+║   │  Indexer service │      │  Discord bot app │      │  Ollama          │       ║
+║   │  - Watches vault │◄────►│  - discord.py    │◄────►│  - Qwen 2.5 7B   │       ║
+║   │  - Chunks + embeds      │  - LlamaIndex    │      │  - nomic-embed   │       ║
+║   └────────┬─────────┘      └────────┬─────────┘      └──────────────────┘       ║
+║            │                         │                                           ║
 ║            ▼                         ▼                                           ║
-║         ┌──────────────────────────────┐                                         ║
-║         │  Qdrant (vector DB)          │                                         ║
-║         │  - Persistent volume         │                                         ║
-║         └──────────────────────────────┘                                         ║
+║         ┌──────────────────────────────┐    ┌──────────────────────────────┐     ║
+║         │  Qdrant (vector DB)          │    │  Shared volumes              │     ║
+║         │  - Persistent volume         │    │  - vault mount (ro)          │     ║
+║         └──────────────────────────────┘    │  - model cache, qdrant data  │     ║
+║                                             └──────────────────────────────┘     ║
 ╚══════════════════════════════════════════════════════════════════════════════════╝
 ```
 
-### Data flow
+---
 
-**Indexing** (on startup + on vault file changes)
-1. Indexer watches the `/vault` mount
-2. Chunks markdown files respecting headers and wikilinks
-3. Calls Ollama → `nomic-embed-text` embeddings
+## Data Flow
+
+### Indexing (one-time + on file changes)
+1. Indexer watches `/vault` mount
+2. Chunks markdown (respecting headers, wikilinks)
+3. Calls Ollama → embeddings
 4. Stores vectors + metadata in Qdrant
 
-**Query** (per Discord mention)
-1. User mentions `@GTT Bot` in Discord
-2. Bot embeds the question (Ollama, local)
-3. Bot retrieves top-k chunks (Qdrant, local)
-4. Bot sends context + question to Claude via Anthropic API
-5. Bot posts answer back to Discord with source citations
-
-**`/knowledge-base` query** (fully local, no API cost)
-1. User runs `/knowledge-base <query>`
-2. Bot embeds query and retrieves matching chunks (Ollama + Qdrant)
-3. Returns summary and raw chunks directly — no LLM involved
+### Query (per Discord message)
+1. User mentions bot in Discord
+2. Bot receives event via Discord gateway
+3. Bot embeds question (Ollama)
+4. Bot retrieves top-k chunks (Qdrant)
+5. Bot builds prompt + context, calls Ollama SLM
+6. Bot posts answer back to Discord
 
 ---
 
-## Bot commands
-
-| Command | Description | Cost |
-|---|---|---|
-| `@GTT Bot <question>` | Ask a question, get a GTT-voiced answer in a thread | Anthropic API |
-| `/knowledge-search <query>` | Search vault in a private thread (visible to mods) | Free (local) |
-| `/knowledge-base <query>` | Search vault, results sent to your DMs only | Free (local) |
-| `/thread-mode on/off` | Toggle thread replies on or off | Free (local) |
-| `/status` | Show knowledge base size, uptime, config (private) | Free (local) |
-| `/glossary` | GTT terminology with definitions and example queries | Free (local) |
-| `/export` | Export a single channel to text/JSON/HTML (GTT Team only) | Free (local) |
-| `/export-all` | Export all channels to disk (GTT Team only) | Free (local) |
-| `/export-state` | Incremental export — only new messages since last run (GTT Team only) | Free (local) |
-| `/export-thread` | Export the current thread to text/JSON/HTML (GTT Team only) | Free (local) |
-
-### Thread memory
-
-When you `@GTT Bot` inside an existing thread, the bot reads the last 30 messages and builds conversation history. Follow-up questions are answered in context — no need to repeat yourself. This applies to both `@GTT Bot` threads and `/knowledge-search` threads.
-
-The 30-message cap keeps token costs controlled. Long threads are still readable but only the most recent 30 messages are passed to Claude.
-
----
-
-## Tech stack
+## Tech Stack
 
 | Layer | Tech | Purpose |
 |---|---|---|
-| **Answer generation** | Claude (Anthropic API) | GTT-voiced responses |
-| **Embedding model** | nomic-embed-text (Ollama) | Vault chunk embeddings |
+| **SLM runtime** | Ollama | Serves Qwen 2.5 7B + nomic-embed-text |
+| **LLM model** | Qwen 2.5 7B Instruct | Answer generation |
+| **Embedding model** | nomic-embed-text | Markdown-friendly vectors |
 | **Vector DB** | Qdrant | Persistent vector store |
-| **RAG pipeline** | LlamaIndex | Chunking, retrieval |
-| **Discord client** | discord.py | Bot integration |
-| **File watcher** | watchdog | Auto-reindex on vault change |
+| **Orchestration** | LlamaIndex | RAG pipeline, chunking, retrieval |
+| **Discord client** | discord.py | Official bot integration |
+| **File watcher** | watchdog (Python) | Auto-reindex on vault change |
+| **Language** | Python 3.11+ | Indexer + bot |
 | **Containerization** | Docker Compose | Multi-service orchestration |
+| **GPU passthrough** | NVIDIA Container Toolkit | If GPU available |
 
 ---
 
-## Project structure
+## Container Layout
 
-```
-services/bot/
-├── main.py                      # Entry point (shim — calls gtt_bot.main)
-├── gtt_bot/
-│   ├── main.py                  # Client setup, on_ready, on_message, bot.run()
-│   ├── config.py                # All env vars, constants, SYSTEM_PROMPT
-│   ├── globals.py               # Mutable runtime state (cooldowns, thread mode, retriever)
-│   ├── rag/
-│   │   ├── retriever.py         # build_retriever(), retrieve_context()
-│   │   ├── anthropic.py         # query_anthropic()
-│   │   └── formatters.py        # Chunk formatting and text splitting helpers
-│   ├── discord_utils/
-│   │   ├── permissions.py       # Role, channel, and guild access checks
-│   │   ├── cooldown.py          # Per-user rate limiting
-│   │   ├── thread_mode.py       # get/set thread mode per guild
-│   │   └── thread_history.py    # Conversation history from threads
-│   ├── automod/
-│   │   ├── rules.py             # check_automod() — rule evaluation and timeouts
-│   │   └── alerts.py            # send_mod_alert()
-│   ├── export/
-│   │   ├── core.py              # Channel export, attachment download, URL extraction
-│   │   ├── formatters.py        # Message serialization and HTML rendering
-│   │   └── state.py             # Incremental export state (load/save)
-│   └── commands/
-│       ├── knowledge.py         # /knowledge-base, /knowledge-search
-│       ├── status.py            # /status
-│       ├── thread_mode_cmd.py   # /thread-mode
-│       ├── export_single.py     # /export
-│       ├── export_all.py        # /export-all
-│       └── export_state.py      # /export-state
-services/indexer/
-└── main.py                      # Vault watcher and Qdrant indexer
-```
+### 4 services in `docker-compose.yml`
+
+1. **`ollama`** — official `ollama/ollama` image, GPU-enabled, exposes port 11434
+2. **`qdrant`** — official `qdrant/qdrant` image, exposes port 6333, persistent volume
+3. **`indexer`** — custom Python image, mounts vault read-only, runs file watcher
+4. **`bot`** — custom Python image, holds Discord token via env var
+
+### Volumes
+- `./vault` → `/vault` (read-only, both indexer and bot)
+- `ollama_data` → model cache
+- `qdrant_data` → vector store persistence
+
+### Network
+- Single internal Docker network
+- Only `bot` needs outbound to Discord
+- Nothing inbound from outside
 
 ---
 
-## Hardware requirements
+## Hardware Requirements
 
-- **RAM:** 16 GB minimum (32 GB recommended)
-- **Disk:** ~5 GB for embedding model + vault index
-- **GPU:** Optional — only used for Ollama embeddings
+- **GPU:** 8–12 GB VRAM (NVIDIA recommended for Ollama GPU support)
+- **RAM:** 16 GB minimum
+- **Disk:** ~10 GB for models + vault size
 
 ---
 
-## Setup
+## Discord Setup Notes
+
+- Use **official Discord Bot account** (not self-bot with username/password)
+- Self-bots violate Discord ToS and risk account ban
+- Bot uses a token from the Discord Developer Portal
+- Invite bot to your server with `MESSAGE_CONTENT` and `GUILD_MESSAGES` intents
+
+---
+
+## Local Testing
 
 ### Prerequisites
 
 - Docker Desktop (or Docker Engine + Compose v2)
-- A Discord bot token — [Developer Portal](https://discord.com/developers/applications) → New Application → Bot → Reset Token
+- ~10 GB free disk for models
+- A Discord bot token ([Developer Portal](https://discord.com/developers/applications) → New Application → Bot → Reset Token)
   - Enable **Privileged Gateway Intents**: `MESSAGE CONTENT INTENT`
-  - Invite to your server via OAuth2 URL Generator with scopes `bot` and `applications.commands`, permissions `Send Messages` + `Read Message History` + `Create Public Threads`
-- An Anthropic API key — [console.anthropic.com](https://console.anthropic.com) → API Keys
-- An Obsidian vault (or any folder of markdown files)
+  - Invite to your test server via OAuth2 URL Generator with scopes `bot`, permissions `Send Messages` + `Read Message History`
+- A folder with some markdown files to act as your vault (a small test vault is fine)
 
 ### 1. Configure environment
 
@@ -151,157 +122,79 @@ services/indexer/
 cp .env.example .env
 ```
 
-Edit `.env` with your values:
-
+Edit `.env`:
 ```
 DISCORD_TOKEN=your_bot_token_here
-ANTHROPIC_API_KEY=your_anthropic_key_here
-VAULT_PATH=/absolute/path/to/your/vault
-
-# Lock the bot to specific servers (recommended)
-ALLOWED_GUILDS=your_guild_id_here
+VAULT_PATH=/absolute/path/to/your/test-vault
 ```
-
-To get your guild ID: enable Developer Mode in Discord (Settings → Advanced), then right-click your server name → Copy Server ID.
 
 ### 2. Start the stack
 
 ```bash
 docker compose up -d --build
+docker compose logs -f
 ```
 
-First run downloads images and builds containers. Takes a few minutes.
+First run takes a few minutes (image builds + downloads).
 
-### 3. Pull the embedding model (one-time)
+### 3. Pull models into Ollama (one-time)
 
 ```bash
+docker compose exec ollama ollama pull qwen2.5:7b-instruct
 docker compose exec ollama ollama pull nomic-embed-text
 ```
 
-Then restart the indexer so it can build the vault index:
+### 4. Verify services
 
 ```bash
-docker compose restart indexer
-```
+# Ollama responding
+curl http://localhost:11434/api/tags
 
-### 4. Verify
+# Qdrant responding
+curl http://localhost:6333/collections
 
-```bash
-# Bot connected
-docker compose logs bot --tail=20
-# expect: "Slash commands synced" and "Logged in as <bot-name>"
+# Indexer chunked + uploaded the vault
+docker compose logs indexer | tail -20
 
-# Indexer built the vault
-docker compose logs indexer --tail=20
-# expect: "Index build complete"
+# Bot connected to Discord gateway
+docker compose logs bot | tail -20
+# expect: "Logged in as <bot-name>"
 ```
 
 ### 5. Test from Discord
 
-```
-@GTT Bot what is DIF?
-```
+In the channel where the bot is invited, mention it with a question:
 
 ```
-/knowledge-base repository lifetime reasoning
+@your-bot what does my note about X say?
 ```
 
-```
-/status
-```
+The bot should reply with an answer grounded in your vault notes.
 
----
+### 6. Test indexer reactivity
 
-## Configuration reference
-
-All settings go in `.env`. See `.env.example` for the full list with descriptions.
-
-| Variable | Default | Description |
-|---|---|---|
-| `DISCORD_TOKEN` | required | Bot token from Discord Developer Portal |
-| `ANTHROPIC_API_KEY` | required | API key from console.anthropic.com |
-| `VAULT_PATH` | required | Absolute path to your Obsidian vault |
-| `EMBED_MODEL` | `nomic-embed-text` | Ollama embedding model |
-| `QDRANT_COLLECTION` | `vault` | Qdrant collection name |
-| `TOP_K` | `5` | Number of vault chunks returned per query |
-| `MIN_SCORE` | `0.40` | Hybrid score threshold — below this the bot answers from reasoning with no sources |
-| `KEYWORD_WEIGHT` | `0.5` | Weight of keyword matching vs vector similarity — higher boosts exact terms like DIF, RLR |
-| `ALLOWED_GUILDS` | *(all)* | Comma-separated guild IDs. Empty = allow all |
-| `ALLOWED_CHANNELS` | *(all)* | Comma-separated channel IDs. Empty = allow all |
-| `COOLDOWN_SECONDS` | `30` | Per-user cooldown for `@mention` (Anthropic API) |
-| `COOLDOWN_LOCAL_SECONDS` | `10` | Per-user cooldown for `/knowledge-base` and `/knowledge-search` |
-| `COOLDOWN_EXEMPT_USERS` | *(none)* | Comma-separated Discord user IDs exempt from all cooldowns |
-| `MAX_QUESTION_LENGTH` | `500` | Max characters per question |
-| `USE_THREADS` | `true` | Reply in public threads (toggle off per-guild with `/thread-mode off`) |
-| `THREAD_HISTORY_LIMIT` | `30` | Number of bot-related exchanges to include in thread memory |
-| `REQUIRED_ROLE` | *(none)* | Role name required to use `@GTT Bot`. Empty = allow all |
-| `MOD_CHANNEL_ID` | *(none)* | Channel ID for automod alerts |
-| `GENERAL_CHANNEL_ID` | *(none)* | Channel ID for self-promo detection |
-| `SELF_PROMO_PATTERNS` | *(none)* | Comma-separated self-promo keywords (kept private in `.env`) |
-| `NEW_ACCOUNT_DAYS` | `7` | Flag new accounts younger than this with no role |
-| `SUSPICIOUS_MSG_LENGTH` | `200` | Message length threshold for new account flag |
-
-### Thread mode
-
-Thread mode is on by default. Set `USE_THREADS=false` in `.env` to disable it globally. Any member in an allowed server can also toggle it at runtime with `/thread-mode on` or `/thread-mode off` — this overrides the `.env` default for that server until the bot restarts.
-
----
-
-## Knowledge base
-
-The bot's knowledge base is an Obsidian vault of atomic notes. The indexer watches the vault folder and automatically reindexes when files change.
-
-Notes follow a Zettelkasten structure with wikilinks (`[[note-title]]`) for connections. The bot retrieves the most relevant chunks for each question and uses them as context for the answer.
-
-To update the knowledge base: add or edit markdown files in your vault folder. The indexer picks up changes within a few seconds. To force a full reindex:
+Add or edit a markdown file in your vault folder. The indexer should pick it up within a few seconds:
 
 ```bash
-docker compose restart indexer
+docker compose logs -f indexer
 ```
 
----
+Then ask the bot about the new content.
 
-## Security
-
-- **`ALLOWED_GUILDS`** — strongly recommended. Without it, anyone who discovers your bot's Client ID can invite it to their server and use your Anthropic API key.
-- **`.env`** — never commit this file. It's in `.gitignore` by default.
-- **Ports** — Qdrant (6333) and Ollama (11434) are bound to `127.0.0.1` and not accessible from outside the host.
-- **Rate limiting** — per-user cooldowns on both paths. Adjust `COOLDOWN_SECONDS` and `MAX_QUESTION_LENGTH` to control API cost exposure.
-
----
-
-## Troubleshooting
+### Troubleshooting
 
 ```bash
-# Check bot logs
-docker compose logs bot --tail=30
-
-# Check indexer logs
-docker compose logs indexer --tail=30
-
-# Force reindex
+# Force a full reindex
 docker compose restart indexer
 
-# Rebuild after editing bot code
-docker compose up --build bot -d
-
-# Wipe vector store and reindex from scratch
+# Wipe the vector store and reindex from scratch
 docker compose down
-docker volume rm gtt-bot_qdrant_data
-docker compose up -d --build
+docker volume rm aya_qdrant_data
+docker compose up -d
 
-# Pull a different embedding model
-docker compose exec ollama ollama pull <model-name>
+# Rebuild after editing service code
+docker compose up -d --build bot
+docker compose up -d --build indexer
 ```
 
-If the bot doesn't respond to mentions, confirm **MESSAGE CONTENT INTENT** is enabled in the Developer Portal — without it, discord.py receives empty message content.
-
-If `/knowledge-base` returns nothing, the indexer may not have run yet. Check its logs and restart if needed.
-
----
-
-## Contributing
-
-This is a proof-of-concept built for the GTT community. The knowledge base (vault) is separate from the bot code by design — the code is public, the knowledge base is yours to keep private or share as you choose.
-
-To adapt this for your own community: replace the `SYSTEM_PROMPT` in `services/bot/gtt_bot/config.py` with your own worldview, drop your markdown notes into the vault, and you have a bot that reflects your community's actual knowledge and voice.
+If the bot doesn't respond to mentions, confirm the **MESSAGE CONTENT INTENT** is enabled in the Developer Portal — without it, `discord.py` receives empty message content.

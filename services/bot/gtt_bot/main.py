@@ -8,6 +8,7 @@ from discord import app_commands
 import gtt_bot.globals as G
 from gtt_bot.automod.rules import check_automod
 from gtt_bot.commands import archive_thread, export_all, export_single, export_state, export_thread, glossary, knowledge, status, thread_mode_cmd
+from gtt_bot.thread_store import load as load_thread_store, register as register_thread
 from gtt_bot.config import (
     COOLDOWN_ANTHROPIC,
     DISCORD_MSG_LIMIT,
@@ -38,9 +39,9 @@ client = discord.Client(intents=intents)
 tree = app_commands.CommandTree(client)
 
 # Register all slash commands
-archive_thread.setup(tree)
 knowledge.setup(tree)
 status.setup(tree)
+archive_thread.setup(tree)
 thread_mode_cmd.setup(tree)
 export_single.setup(tree)
 export_all.setup(tree)
@@ -55,6 +56,7 @@ async def _send_answer(message: discord.Message, answer: str, sources: str = "")
     use_threads = get_thread_mode(message.guild.id) if message.guild else False
     if use_threads and isinstance(message.channel, discord.TextChannel):
         thread = await message.create_thread(name=message.clean_content[:80] or "GTT Bot")
+        register_thread(thread.id, message.author.id)
         for chunk in chunks:
             await thread.send(chunk)
         if sources:
@@ -134,6 +136,7 @@ async def on_message(message: discord.Message):
 
 
 def main():
+    load_thread_store()
     G.retriever = build_retriever()
     log.info("Retriever ready")
     client.run(DISCORD_TOKEN)
