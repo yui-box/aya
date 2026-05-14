@@ -52,6 +52,7 @@ while True:
             n.score or 0,
             _keyword_score(terms, n.get_content(), n.metadata.get("file_name", "")),
             n.metadata.get("file_name", "?"),
+            n.get_content(),
         )
         for n in nodes
     ], reverse=True)
@@ -59,9 +60,36 @@ while True:
     print(f"\n  terms   : {terms or '(none)'}")
     print(f"  nodes   : {len(nodes)}   threshold : {MIN_SCORE}   top_k : {TOP_K}")
     print()
-    print(f"  {'hybrid':>7}  {'vector':>7}  {'kw':>7}  file")
-    print("  " + "-" * 52)
-    for i, (h, v, k, f) in enumerate(rows):
-        tag = " <-- returned" if i < TOP_K and h >= MIN_SCORE else ""
-        print(f"  {h:>7.3f}  {v:>7.3f}  {k:>7.3f}  {f}{tag}")
+
+    # Simulate production dedup: first occurrence of each file in sorted order is the keeper
+    seen: set[str] = set()
+    returned: set[int] = set()
+    for i, (h, v, k, f, _) in enumerate(rows):
+        if f not in seen and h >= MIN_SCORE and len(returned) < TOP_K:
+            returned.add(i)
+        seen.add(f)
+
+    # Track chunk number per file for display (chunk 1 = highest scoring)
+    file_chunk_count: dict[str, int] = {}
+    chunk_labels: list[str] = []
+    for h, v, k, f, _ in rows:
+        file_chunk_count[f] = file_chunk_count.get(f, 0) + 1
+        chunk_labels.append(f"chunk {file_chunk_count[f]}")
+
+    print(f"  {'#':>3}  {'hybrid':>7}  {'vector':>7}  {'kw':>7}  chunk   file")
+    print("  " + "-" * 62)
+    for i, (h, v, k, f, _) in enumerate(rows):
+        tag = " <-- returned" if i in returned else ""
+        print(f"  {i+1:>3}  {h:>7.3f}  {v:>7.3f}  {k:>7.3f}  {chunk_labels[i]:<7} {f}{tag}")
     print()
+
+    # Show full content of returned chunks
+    returned_rows = [(i, rows[i]) for i in sorted(returned)]
+    if returned_rows:
+        print("  ── returned chunk content " + "─" * 34)
+        for i, (h, v, k, f, content) in returned_rows:
+            print(f"\n  [{i+1}] {f}  (hybrid={h:.3f}, {chunk_labels[i]})")
+            print("  " + "─" * 58)
+            for line in content.splitlines():
+                print(f"    {line}")
+        print()
