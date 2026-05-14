@@ -64,4 +64,4 @@ def format_sources(nodes: list) -> str:
         source = node.metadata.get("file_name", "unknown")
         if source not in seen:
             seen.append(source)
-    return "**Sources:** " + " · ".join(f"`{s}`" for s in seen)
+    return "*Sources — " + ", ".join(seen) + "*"

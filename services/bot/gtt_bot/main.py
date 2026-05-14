@@ -46,25 +46,20 @@ export_state.setup(tree)
 
 
 async def _send_answer(message: discord.Message, answer: str, sources: str = ""):
-    # Split answer at sentence boundaries, then attach sources to the last chunk
-    # if it fits — otherwise send it as a separate message so it's never sliced mid-backtick.
     chunks = split_at_sentence(answer)
-    if sources:
-        last = chunks[-1]
-        candidate = f"{last}\n\n{sources}"
-        if len(candidate) <= DISCORD_MSG_LIMIT:
-            chunks[-1] = candidate
-        else:
-            chunks.append(sources)
 
     use_threads = get_thread_mode(message.guild.id) if message.guild else False
     if use_threads and isinstance(message.channel, discord.TextChannel):
         thread = await message.create_thread(name=message.clean_content[:80] or "GTT Bot")
         for chunk in chunks:
             await thread.send(chunk)
+        if sources:
+            await thread.send(sources)
     else:
         for chunk in chunks:
             await message.reply(chunk)
+        if sources:
+            await message.reply(sources)
 
 
 @client.event

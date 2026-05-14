@@ -21,8 +21,8 @@ async def get_thread_history(channel, client: discord.Client, limit: int = 30) -
             if msg.author == client.user:
                 # Bot response — strip sources line before adding to history
                 msg_content = msg.content
-                if "**Sources:**" in msg_content:
-                    msg_content = msg_content[:msg_content.index("**Sources:**")].strip()
+                if "*Sources —" in msg_content:
+                    msg_content = msg_content[:msg_content.index("*Sources —")].strip()
                 if msg_content:
                     bot_related.append({"role": "assistant", "content": msg_content})
             elif not msg.author.bot and client.user in msg.mentions:
