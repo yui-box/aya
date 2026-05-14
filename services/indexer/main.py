@@ -58,7 +58,8 @@ def build_index():
         VAULT_DIR, recursive=True, required_exts=[".md"]
     ).load_data()
 
-    log.info("Loaded %d markdown documents", len(docs))
+    unique_files = len(set(d.metadata.get("file_path") for d in docs))
+    log.info("Loaded %d markdown documents from %d files", len(docs), unique_files)
 
     # Parse nodes and filter out noise chunks before indexing
     parser = SentenceSplitter(chunk_size=512, chunk_overlap=50)

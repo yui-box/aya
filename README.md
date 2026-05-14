@@ -173,24 +173,24 @@ First run downloads images and builds containers. Takes a few minutes.
 ### 3. Pull the embedding model (one-time)
 
 ```bash
-docker compose exec gtt-ollama ollama pull nomic-embed-text
+docker compose exec ollama ollama pull nomic-embed-text
 ```
 
 Then restart the indexer so it can build the vault index:
 
 ```bash
-docker compose restart gtt-indexer
+docker compose restart indexer
 ```
 
 ### 4. Verify
 
 ```bash
 # Bot connected
-docker compose logs gtt-bot --tail=20
+docker compose logs bot --tail=20
 # expect: "Slash commands synced" and "Logged in as <bot-name>"
 
 # Indexer built the vault
-docker compose logs gtt-indexer --tail=20
+docker compose logs indexer --tail=20
 # expect: "Index build complete"
 ```
 
@@ -250,7 +250,7 @@ Notes follow a Zettelkasten structure with wikilinks (`[[note-title]]`) for conn
 To update the knowledge base: add or edit markdown files in your vault folder. The indexer picks up changes within a few seconds. To force a full reindex:
 
 ```bash
-docker compose restart gtt-indexer
+docker compose restart indexer
 ```
 
 ---
@@ -268,16 +268,16 @@ docker compose restart gtt-indexer
 
 ```bash
 # Check bot logs
-docker compose logs gtt-bot --tail=30
+docker compose logs bot --tail=30
 
 # Check indexer logs
-docker compose logs gtt-indexer --tail=30
+docker compose logs indexer --tail=30
 
 # Force reindex
-docker compose restart gtt-indexer
+docker compose restart indexer
 
 # Rebuild after editing bot code
-docker compose up --build gtt-bot -d
+docker compose up --build bot -d
 
 # Wipe vector store and reindex from scratch
 docker compose down
@@ -285,7 +285,7 @@ docker volume rm gtt-bot_qdrant_data
 docker compose up -d --build
 
 # Pull a different embedding model
-docker compose exec gtt-ollama ollama pull <model-name>
+docker compose exec ollama ollama pull <model-name>
 ```
 
 If the bot doesn't respond to mentions, confirm **MESSAGE CONTENT INTENT** is enabled in the Developer Portal — without it, discord.py receives empty message content.
