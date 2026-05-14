@@ -1,7 +1,6 @@
 import io
 import json
 import logging
-import re
 import zipfile
 
 import discord
@@ -24,7 +23,7 @@ _HTML_STYLE = (
 def setup(tree: app_commands.CommandTree) -> None:
     @tree.command(
         name="export-thread",
-        description="Export this thread to text, JSON, or HTML (GTT Team only)",
+        description="Export this thread to text, JSON, or HTML",
     )
     @app_commands.describe(format="Output format: text, json, or html")
     @app_commands.choices(format=[
@@ -46,11 +45,6 @@ def setup(tree: app_commands.CommandTree) -> None:
             await interaction.response.send_message("This command only works in a server.", ephemeral=True)
             return
 
-        is_gtt_team = any(r.name in ("GTT Team", "admin") for r in interaction.user.roles)
-        if not is_gtt_team:
-            await interaction.response.send_message("This command is restricted to GTT Team.", ephemeral=True)
-            return
-
         if not isinstance(interaction.channel, discord.Thread):
             await interaction.response.send_message(
                 "Run this command inside the thread you want to export.", ephemeral=True
@@ -60,8 +54,15 @@ def setup(tree: app_commands.CommandTree) -> None:
         thread = interaction.channel
         await interaction.response.defer(ephemeral=True)
 
-        # Fetch all messages
+        # Fetch starter message (the question that created the thread) from parent channel
         messages = []
+        if thread.parent:
+            try:
+                starter = await thread.parent.fetch_message(thread.id)
+                messages.append(starter)
+            except (discord.NotFound, discord.Forbidden):
+                pass
+
         async for msg in thread.history(limit=None, oldest_first=True):
             messages.append(msg)
 
@@ -76,9 +77,8 @@ def setup(tree: app_commands.CommandTree) -> None:
                 if msg.reactions:
                     reactions_map[str(msg.id)] = await fetch_reactions(msg)
 
-        safe_name = re.sub(r'[^\w\s-]', '', thread.name).strip()
-        safe_name = re.sub(r'\s+', '-', safe_name)[:80].rstrip('-') or "thread"
-        filename_base = f"thread-{safe_name}"
+        filename_base = "thread-GTT-Bot"
+        safe_name = "thread-GTT-Bot"
 
         # Build export content
         if format == "text":

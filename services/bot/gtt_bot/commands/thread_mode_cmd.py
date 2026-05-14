@@ -20,6 +20,11 @@ def setup(tree: app_commands.CommandTree) -> None:
         if not is_allowed_guild(interaction.guild_id):
             await interaction.response.send_message("This bot isn't enabled in this server.", ephemeral=True)
             return
+        if not isinstance(interaction.user, discord.Member) or not any(
+            r.name == "GTT Team" for r in interaction.user.roles
+        ):
+            await interaction.response.send_message("This command is restricted to GTT Team.", ephemeral=True)
+            return
         state = enabled == "on"
         set_thread_mode(interaction.guild_id, state)
         status = "on — bot will reply in threads" if state else "off — bot will reply inline"

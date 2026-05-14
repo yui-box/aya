@@ -184,7 +184,7 @@ GTT_GLOSSARY = [
             "branch prediction succeeds. Foundational to DIF's performance — constant-time inference "
             "requires control over memory layout."
         ),
-        "example": "/knowledge-search structure of arrays cache coherency CPU bottleneck",
+        "example": "/knowledge-search data oriented design",
     },
     {
         "term": "Ownership Deficit",
@@ -227,7 +227,7 @@ GTT_GLOSSARY = [
             "in broad claims. The GTT position is accuracy: neither boosterism nor reflexive "
             "skepticism. Ask who benefits from you believing the marketing."
         ),
-        "example": "/knowledge-search LLM pattern matching hype financial interests",
+        "example": "/knowledge-search ai hype vs reality",
     },
     {
         "term": "Critical Thinking",
@@ -238,7 +238,7 @@ GTT_GLOSSARY = [
             "A technical competency, not a soft skill — applied to tools, architectures, and "
             "vendor claims with the same rigor as code."
         ),
-        "example": "/knowledge-search falsification over confirmation incentive structure",
+        "example": "/knowledge-search critical thinking engineering discipline",
     },
 ]
 
