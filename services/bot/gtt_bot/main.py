@@ -7,7 +7,7 @@ from discord import app_commands
 
 import gtt_bot.globals as G
 from gtt_bot.automod.rules import check_automod
-from gtt_bot.commands import export_all, export_single, export_state, export_thread, glossary, knowledge, status, thread_mode_cmd
+from gtt_bot.commands import archive_thread, export_all, export_single, export_state, export_thread, glossary, knowledge, status, thread_mode_cmd
 from gtt_bot.config import (
     COOLDOWN_ANTHROPIC,
     DISCORD_MSG_LIMIT,
@@ -38,6 +38,7 @@ client = discord.Client(intents=intents)
 tree = app_commands.CommandTree(client)
 
 # Register all slash commands
+archive_thread.setup(tree)
 knowledge.setup(tree)
 status.setup(tree)
 thread_mode_cmd.setup(tree)
