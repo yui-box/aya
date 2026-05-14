@@ -62,10 +62,8 @@ async def _send_answer(message: discord.Message, answer: str, sources: str):
         for chunk in chunks:
             await thread.send(chunk)
     else:
-        first, *rest = chunks
-        await message.reply(first)
-        for chunk in rest:
-            await message.channel.send(chunk)
+        for chunk in chunks:
+            await message.reply(chunk)
 
 
 @client.event
