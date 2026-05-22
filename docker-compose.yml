@@ -7,7 +7,12 @@ services:
     volumes:
       - ollama_data:/root/.ollama
     restart: unless-stopped
-    # Remove: deploy.resources.reservations.devices
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/11434' 2>/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
 
   qdrant:
     image: qdrant/qdrant:latest
@@ -17,13 +22,36 @@ services:
     volumes:
       - qdrant_data:/qdrant/storage
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/6333' 2>/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  model-init:
+    image: ollama/ollama:latest
+    container_name: aya-model-init
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      LLM_MODEL: ${LLM_MODEL:-qwen2.5:7b-instruct}
+      EMBED_MODEL: ${EMBED_MODEL:-nomic-embed-text}
+    entrypoint: ["/bin/sh", "-c", "ollama pull $EMBED_MODEL && ollama pull $LLM_MODEL"]
+    restart: "no"
 
   indexer:
     build: ./services/indexer
     container_name: aya-indexer
     depends_on:
-      - ollama
-      - qdrant
+      ollama:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      model-init:
+        condition: service_completed_successfully
     environment:
       OLLAMA_HOST: http://ollama:11434
       QDRANT_HOST: http://qdrant:6333
@@ -38,19 +66,28 @@ services:
     build: ./services/bot
     container_name: aya-bot
     depends_on:
-      - ollama
-      - qdrant
-      - indexer
+      ollama:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      model-init:
+        condition: service_completed_successfully
+      indexer:
+        condition: service_started
     environment:
       DISCORD_TOKEN: ${DISCORD_TOKEN}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OLLAMA_HOST: http://ollama:11434
       QDRANT_HOST: http://qdrant:6333
       LLM_MODEL: ${LLM_MODEL:-qwen2.5:7b-instruct}
       EMBED_MODEL: ${EMBED_MODEL:-nomic-embed-text}
       QDRANT_COLLECTION: ${QDRANT_COLLECTION:-vault}
       TOP_K: ${TOP_K:-5}
+      GOOGLE_CREDENTIALS_PATH: ${GOOGLE_CREDENTIALS_PATH:-}
+      DISCORD_EMAIL_ALLOWED_USER_IDS: ${DISCORD_EMAIL_ALLOWED_USER_IDS:-}
     volumes:
       - ${VAULT_PATH}:/vault:ro
+      - ${GOOGLE_CREDENTIALS_DIR:-/dev/null}:/credentials
     restart: unless-stopped
 
 volumes:

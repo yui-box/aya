@@ -3,7 +3,7 @@ import time
 import logging
 from pathlib import Path
 
-from watchdog.observers import Observer
+from watchdog.observers.polling import PollingObserver as Observer
 from watchdog.events import FileSystemEventHandler
 
 from llama_index.core import SimpleDirectoryReader, StorageContext, VectorStoreIndex, Settings
@@ -22,6 +22,7 @@ EMBED_MODEL = os.environ["EMBED_MODEL"]
 COLLECTION = os.environ["QDRANT_COLLECTION"]
 
 DEBOUNCE_SECONDS = 3.0
+AYA_SUBDIR = "_aya"
 
 
 def build_index():
@@ -33,14 +34,18 @@ def build_index():
     Settings.node_parser = MarkdownNodeParser()
 
     client = QdrantClient(url=QDRANT_HOST)
+    if client.collection_exists(COLLECTION):
+        client.delete_collection(COLLECTION)
     vector_store = QdrantVectorStore(client=client, collection_name=COLLECTION)
     storage_context = StorageContext.from_defaults(vector_store=vector_store)
 
-    docs = SimpleDirectoryReader(
+    aya_prefix = str(Path(VAULT_DIR) / AYA_SUBDIR) + os.sep
+    all_docs = SimpleDirectoryReader(
         VAULT_DIR, recursive=True, required_exts=[".md"]
     ).load_data()
+    docs = [d for d in all_docs if not d.metadata.get("file_path", "").startswith(aya_prefix)]
 
-    log.info("Loaded %d markdown documents", len(docs))
+    log.info("Loaded %d markdown documents (%d _aya/ files excluded)", len(docs), len(all_docs) - len(docs))
 
     VectorStoreIndex.from_documents(docs, storage_context=storage_context)
     log.info("Index build complete (collection=%s)", COLLECTION)

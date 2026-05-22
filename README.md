@@ -69,12 +69,13 @@
 
 ## Container Layout
 
-### 4 services in `docker-compose.yml`
+### 5 services in `docker-compose.yml`
 
 1. **`ollama`** — official `ollama/ollama` image, GPU-enabled, exposes port 11434
 2. **`qdrant`** — official `qdrant/qdrant` image, exposes port 6333, persistent volume
-3. **`indexer`** — custom Python image, mounts vault read-only, runs file watcher
-4. **`bot`** — custom Python image, holds Discord token via env var
+3. **`model-init`** — one-shot service that pulls `EMBED_MODEL` and `LLM_MODEL` into Ollama on first boot, then exits
+4. **`indexer`** — custom Python image, mounts vault read-only, runs file watcher
+5. **`bot`** — custom Python image, holds Discord token via env var
 
 ### Volumes
 - `./vault` → `/vault` (read-only, both indexer and bot)
@@ -132,19 +133,15 @@ VAULT_PATH=/absolute/path/to/your/test-vault
 
 ```bash
 docker compose up -d --build
-docker compose logs -f
 ```
 
-First run takes a few minutes (image builds + downloads).
-
-### 3. Pull models into Ollama (one-time)
+On first run, `model-init` automatically pulls the required models before `indexer` and `bot` start. This takes a few minutes depending on your connection. Follow progress with:
 
 ```bash
-docker compose exec ollama ollama pull qwen2.5:7b-instruct
-docker compose exec ollama ollama pull nomic-embed-text
+docker compose logs -f model-init
 ```
 
-### 4. Verify services
+### 3. Verify services
 
 ```bash
 # Ollama responding
@@ -161,7 +158,7 @@ docker compose logs bot | tail -20
 # expect: "Logged in as <bot-name>"
 ```
 
-### 5. Test from Discord
+### 4. Test from Discord
 
 In the channel where the bot is invited, mention it with a question:
 
@@ -171,7 +168,7 @@ In the channel where the bot is invited, mention it with a question:
 
 The bot should reply with an answer grounded in your vault notes.
 
-### 6. Test indexer reactivity
+### 5. Test indexer reactivity
 
 Add or edit a markdown file in your vault folder. The indexer should pick it up within a few seconds:
 

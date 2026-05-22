@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(docker compose *)",
+      "Bash(docker logs *)",
+      "Bash(docker exec *)",
+      "Bash(docker ps *)",
+      "Bash(docker volume *)",
+      "Bash(docker inspect *)",
+      "Bash(git *)",
+      "Bash(ls *)",
+      "Bash(ls)",
+      "Bash(cat *)",
+      "Bash(grep *)",
+      "Bash(find *)",
+      "Read(**)"
+    ]
+  }
+}

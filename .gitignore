@@ -3,5 +3,4 @@ __pycache__/
 *.pyc
 .venv/
 .DS_Store
-.claude/
-CLAUDE.md
+test-vault
