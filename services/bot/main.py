@@ -6,6 +6,8 @@ from pathlib import Path
 import anthropic
 import discord
 
+from email_reader import fetch_unread
+
 from llama_index.core import VectorStoreIndex, Settings, PromptTemplate
 from llama_index.embeddings.ollama import OllamaEmbedding
 from llama_index.llms.ollama import Ollama
@@ -26,6 +28,13 @@ COLLECTION = os.environ["QDRANT_COLLECTION"]
 TOP_K = int(os.environ.get("TOP_K", "5"))
 
 DISCORD_MSG_LIMIT = 2000
+
+# Comma-separated Discord user IDs allowed to run !emails. Empty = disabled for everyone.
+_DISCORD_EMAIL_ALLOWED_USER_IDS: set[int] = {
+    int(uid.strip())
+    for uid in os.environ.get("DISCORD_EMAIL_ALLOWED_USER_IDS", "").split(",")
+    if uid.strip().isdigit()
+}
 
 AYA_DIR = "/vault/_aya"
 
@@ -139,10 +148,42 @@ async def on_ready():
     log.info("Logged in as %s", client.user)
 
 
+def _can_use_email_command(message: discord.Message) -> bool:
+    return bool(_DISCORD_EMAIL_ALLOWED_USER_IDS) and message.author.id in _DISCORD_EMAIL_ALLOWED_USER_IDS
+
+
 @client.event
 async def on_message(message: discord.Message):
     if message.author == client.user:
         return
+
+    if message.content.strip().startswith("!emails"):
+        if not _can_use_email_command(message):
+            await message.reply("You don't have permission to use this command.")
+            return
+        async with message.channel.typing():
+            try:
+                emails = await asyncio.to_thread(fetch_unread, 10)
+            except Exception:
+                log.exception("Failed to fetch emails")
+                await message.reply("Failed to fetch emails — check credentials and try again.")
+                return
+        if not emails:
+            await message.reply("No unread emails.")
+            return
+        lines = ["**Unread emails:**"]
+        for i, e in enumerate(emails, 1):
+            lines.append(
+                f"**{i}.** {e['subject']}\n"
+                f"   From: {e['sender']}\n"
+                f"   Date: {e['date']}\n"
+                f"   _{e['snippet']}_"
+            )
+        body = "\n\n".join(lines)
+        for chunk in range(0, len(body), DISCORD_MSG_LIMIT):
+            await message.reply(body[chunk : chunk + DISCORD_MSG_LIMIT])
+        return
+
     if client.user not in message.mentions:
         return
 
@@ -191,6 +232,8 @@ async def on_message(message: discord.Message):
 
 def main():
     global query_engine, qdrant_client
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        log.info("ANTHROPIC_API_KEY not set — cloud routing disabled, all queries will use local LLM")
     qdrant_client = QdrantClient(url=QDRANT_HOST)
     query_engine = build_query_engine()
     client.run(DISCORD_TOKEN)

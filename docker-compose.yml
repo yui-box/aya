@@ -83,8 +83,11 @@ services:
       EMBED_MODEL: ${EMBED_MODEL:-nomic-embed-text}
       QDRANT_COLLECTION: ${QDRANT_COLLECTION:-vault}
       TOP_K: ${TOP_K:-5}
+      GOOGLE_CREDENTIALS_PATH: ${GOOGLE_CREDENTIALS_PATH:-}
+      DISCORD_EMAIL_ALLOWED_USER_IDS: ${DISCORD_EMAIL_ALLOWED_USER_IDS:-}
     volumes:
       - ${VAULT_PATH}:/vault:ro
+      - ${GOOGLE_CREDENTIALS_DIR:-/dev/null}:/credentials
     restart: unless-stopped
 
 volumes:

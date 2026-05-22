@@ -71,7 +71,7 @@ Mention the bot in any Discord channel to query it. Not automatable headless.
 docker compose ps
 curl -s http://localhost:6333/healthz        # Qdrant
 curl -s http://localhost:11434/api/tags      # Ollama (lists pulled models)
-curl -s http://localhost:6333/collections/awesome  # collection stats
+curl -s http://localhost:6333/collections/test-vault  # collection stats
 ```
 
 ## Reindex / reset

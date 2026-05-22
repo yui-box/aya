@@ -9,7 +9,7 @@ Run `git diff --staged` (and `git diff` if nothing is staged) to see what change
 ## Rules
 
 - **One line only** — no body, no bullet points, no explanation
-- **50 chars or fewer** — hard limit
+- **120 chars or fewer** — hard limit
 - **Imperative mood** — "Add", "Fix", "Remove", "Update", "Refactor" (not "Added" or "Adds")
 - **No period at the end**
 - **No ticket numbers, no co-authors, no metadata** unless the user asks
@@ -17,7 +17,11 @@ Run `git diff --staged` (and `git diff` if nothing is staged) to see what change
 
 ## Output format
 
-Just print the message on its own line, nothing else. No quotes, no labels, no explanation.
+Print only the full git command, ready to copy-paste. No explanation, no labels, nothing else:
+
+```
+git commit -m "Verb what changed"
+```
 
 ## How to pick the verb
 
@@ -38,6 +42,6 @@ Just print the message on its own line, nothing else. No quotes, no labels, no e
 1. `git log --oneline -5` — check the language and style of existing commits
 2. `git diff --staged` — see staged changes; if empty, run `git diff` instead
 3. Identify the single most important change (not a list of everything)
-4. Output one line: `<Verb> <what changed>`
+4. Output one line: `git commit -m "<Verb> <what changed>"`
 
 If the diff is empty (nothing staged, nothing modified), say: "No changes detected — nothing to commit."
