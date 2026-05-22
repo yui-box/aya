@@ -88,25 +88,38 @@ retriever = None
 _persona = None
 
 
+_CLOUD_CONTEXT_CHAR_LIMIT = 12_000  # ~3k tokens; leaves room for system + output
+
+
 async def _answer_cloud(question: str) -> str:
     nodes = await asyncio.to_thread(retriever.retrieve, question)
     context = "\n\n".join(n.get_content() for n in nodes)
+    if len(context) > _CLOUD_CONTEXT_CHAR_LIMIT:
+        context = context[:_CLOUD_CONTEXT_CHAR_LIMIT] + "\n[context truncated]"
 
     ac = anthropic.Anthropic()
-    msg = await asyncio.to_thread(
-        ac.messages.create,
-        model="claude-sonnet-4-6",
-        max_tokens=1024,
-        system=_persona,
-        messages=[{"role": "user", "content": (
-            "Context information is below.\n"
-            "---------------------\n"
-            f"{context}\n"
-            "---------------------\n"
-            "Given the context information and not prior knowledge, answer the query.\n"
-            f"Query: {question}"
-        )}],
-    )
+    try:
+        msg = await asyncio.to_thread(
+            ac.messages.create,
+            model="claude-sonnet-4-6",
+            max_tokens=1024,
+            system=_persona,
+            messages=[{"role": "user", "content": (
+                "Context information is below.\n"
+                "---------------------\n"
+                f"{context}\n"
+                "---------------------\n"
+                "Given the context information and not prior knowledge, answer the query.\n"
+                f"Query: {question}"
+            )}],
+        )
+    except anthropic.BadRequestError as exc:
+        body = exc.body if hasattr(exc, "body") else {}
+        msg_text = (body.get("error") or {}).get("message", str(exc))
+        log.error("Anthropic 400: %s", msg_text)
+        if "credit balance" in msg_text:
+            raise RuntimeError("☁️ Cloud unavailable: Anthropic credit balance too low. Falling back is not automatic — please top up at console.anthropic.com.")
+        raise
     answer = msg.content[0].text.strip() if msg.content else "(no answer)"
 
     seen = {}
@@ -164,6 +177,9 @@ async def on_message(message: discord.Message):
                 if seen:
                     parts = [f"{name} ({score:.2f})" if score is not None else name for name, score in seen.items()]
                     answer += "\n\n**Sources:** " + ", ".join(parts)
+        except RuntimeError as exc:
+            await message.reply(str(exc))
+            return
         except Exception:
             log.exception("Query failed")
             await message.reply("Something went wrong answering that.")
